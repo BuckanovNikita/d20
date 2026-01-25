@@ -12,12 +12,17 @@ from loguru import logger
 from PIL import Image
 
 from d20.formats.base import FormatConverter, register_converter
-from d20.types import Annotation, DatasetSplit, ImageInfo
+from d20.types import (
+    Annotation,
+    Dataset,
+    ImageInfo,
+    Split,
+    VocDetectedParams,
+    VocWriteDetectedParams,
+)
 
 if TYPE_CHECKING:
     from xml.etree.ElementTree import ElementTree as _ElementTree
-
-from d20.config import ConversionConfig
 
 
 class UnknownClassNameError(ValueError):
@@ -143,34 +148,55 @@ class VocConverter(FormatConverter):
             raise EmptyPathListError
         return Path(input_path)
 
-    def _prepare_config(
+    def autodetect(
         self,
-        config: ConversionConfig,
-        voc_image_sets_dir: Path,
-        **options: Any,
-    ) -> ConversionConfig:
-        """Prepare configuration with auto-detected splits if requested.
+        input_path: Path | list[Path],
+    ) -> VocDetectedParams:
+        """Autodetect VOC dataset parameters without reading the full dataset.
 
         Args:
-            config: Original conversion configuration
-            voc_image_sets_dir: Path to ImageSets/Main directory
-            **options: Additional options
+            input_path: Path to dataset directory
 
         Returns:
-            Updated configuration
+            VocDetectedParams with detected parameters
 
         """
-        if options.get("auto_detect_splits", False):
+        # Normalize input path
+        if isinstance(input_path, list):
+            if len(input_path) > 0:
+                input_path = input_path[0]
+            else:
+                raise EmptyPathListError
+
+        input_dir = Path(input_path)
+        voc_image_sets_dir = input_dir / "ImageSets" / "Main"
+
+        # Auto-detect splits if ImageSets/Main exists
+        splits: list[str] | None = None
+        auto_detect_splits = False
+        if voc_image_sets_dir.exists():
             detected_splits = self._detect_splits(voc_image_sets_dir)
             if detected_splits:
-                return ConversionConfig(
-                    class_names=config.class_names,
-                    splits=detected_splits,
-                    images_dir=config.images_dir,
-                    labels_dir=config.labels_dir,
-                    annotations_dir=config.annotations_dir,
-                )
-        return config
+                splits = detected_splits
+                auto_detect_splits = True
+
+        # VOC has fixed directory structure
+        images_dir: str | None = "JPEGImages"
+        labels_dir: str | None = None  # VOC doesn't use labels_dir
+        annotations_dir: str | None = "Annotations"
+
+        # Class names cannot be auto-detected from VOC format
+        class_names: list[str] | None = None
+
+        return VocDetectedParams(
+            input_path=input_path,
+            class_names=class_names,
+            splits=splits,
+            images_dir=images_dir,
+            labels_dir=labels_dir,
+            annotations_dir=annotations_dir,
+            auto_detect_splits=auto_detect_splits,
+        )
 
     def _parse_image_xml(
         self,
@@ -220,14 +246,14 @@ class VocConverter(FormatConverter):
         self,
         root: Any,
         image_id: str,
-        config: ConversionConfig,
+        class_names: list[str],
     ) -> list[Annotation]:
         """Parse annotations from VOC XML root element.
 
         Args:
             root: XML root element
             image_id: Image identifier
-            config: Conversion configuration
+            class_names: List of class names
 
         Returns:
             List of annotations
@@ -241,7 +267,7 @@ class VocConverter(FormatConverter):
             name = obj.findtext("name")
             if not name:
                 continue
-            if name not in config.class_names:
+            if name not in class_names:
                 raise UnknownClassNameError(name)
 
             bbox = obj.find("bndbox")
@@ -256,7 +282,7 @@ class VocConverter(FormatConverter):
             annotations.append(
                 Annotation(
                     image_id=image_id,
-                    category_id=config.class_names.index(name),
+                    category_id=class_names.index(name),
                     bbox=(xmin, ymin, xmax - xmin, ymax - ymin),
                 ),
             )
@@ -268,8 +294,8 @@ class VocConverter(FormatConverter):
         voc_image_sets_dir: Path,
         voc_annotations_dir: Path,
         voc_images_dir: Path,
-        config: ConversionConfig,
-    ) -> DatasetSplit:
+        class_names: list[str],
+    ) -> Split:
         """Read a single split from VOC dataset.
 
         Args:
@@ -277,7 +303,7 @@ class VocConverter(FormatConverter):
             voc_image_sets_dir: Directory with split files
             voc_annotations_dir: Directory with XML annotations
             voc_images_dir: Directory with images
-            config: Conversion configuration
+            class_names: List of class names
 
         Returns:
             Dataset split
@@ -298,63 +324,71 @@ class VocConverter(FormatConverter):
             tree = defused_parse(xml_path)
             root = tree.getroot()
             if root is not None:
-                split_annotations = self._parse_annotations_from_xml(root, image_id, config)
+                split_annotations = self._parse_annotations_from_xml(root, image_id, class_names)
                 annotations.extend(split_annotations)
 
-        return DatasetSplit(name=split_name, images=images, annotations=annotations)
+        return Split(name=split_name, images=images, annotations=annotations)
 
     def read(
         self,
-        input_path: Path | list[Path],
-        config: ConversionConfig,
-        **options: Any,
-    ) -> list[DatasetSplit]:
+        params: VocDetectedParams,  # type: ignore[override]
+    ) -> Dataset:
         """Read a VOC format dataset from disk.
 
         Args:
-            input_path: Path to dataset directory (VOC doesn't support list[Path])
-            config: Conversion configuration
-            **options: Additional options:
-                - auto_detect_splits: bool - automatically detect splits from ImageSets/Main
+            params: VocDetectedParams with all necessary information
 
         Returns:
-            List of dataset splits
+            Dataset containing all splits
 
         """
-        input_dir = self._normalize_input_path(input_path)
+        if not params.class_names:
+            msg = "Class names are required for VOC format"
+            raise ValueError(msg)
+
+        if isinstance(params.input_path, list):
+            if len(params.input_path) > 0:
+                input_dir = Path(params.input_path[0])
+            else:
+                raise EmptyPathListError
+        else:
+            input_dir = Path(params.input_path)
+
         voc_images_dir = input_dir / "JPEGImages"
         voc_annotations_dir = input_dir / "Annotations"
         voc_image_sets_dir = input_dir / "ImageSets" / "Main"
 
-        config = self._prepare_config(config, voc_image_sets_dir, **options)
+        # Determine splits
+        if params.auto_detect_splits and voc_image_sets_dir.exists():
+            splits = self._detect_splits(voc_image_sets_dir)
+        else:
+            splits = params.splits or ["data"]
 
-        splits: list[DatasetSplit] = []
-        for split_name in config.split_names:
+        splits_dict: dict[str, Split] = {}
+        for split_name in splits:
             split = self._read_split(
                 split_name,
                 voc_image_sets_dir,
                 voc_annotations_dir,
                 voc_images_dir,
-                config,
+                params.class_names,
             )
-            splits.append(split)
+            splits_dict[split_name] = split
 
-        return splits
+        return Dataset(splits=splits_dict, class_names=params.class_names)
 
     def write(
         self,
         output_dir: Path,
-        config: ConversionConfig,
-        splits: list[DatasetSplit],
-        **_options: Any,
+        dataset: Dataset,
+        params: VocWriteDetectedParams,  # type: ignore[override]
     ) -> None:
         """Write a dataset in VOC format to disk.
 
         Args:
             output_dir: Output directory path
-            config: Conversion configuration
-            splits: List of dataset splits to write
-            **options: Additional options (unused)
+            dataset: Dataset containing all splits
+            params: VocWriteDetectedParams with write configuration
 
         """
         voc_images_dir = output_dir / "JPEGImages"
@@ -365,7 +399,13 @@ class VocConverter(FormatConverter):
         voc_annotations_dir.mkdir(parents=True, exist_ok=True)
         voc_image_sets_dir.mkdir(parents=True, exist_ok=True)
 
-        for split in splits:
+        splits_to_write = params.splits or list(dataset.splits.keys())
+        for split_name in splits_to_write:
+            if split_name not in dataset.splits:
+                logger.warning("Split '{}' not found in dataset, skipping", split_name)
+                continue
+
+            split = dataset.splits[split_name]
             grouped = _group_annotations(split.annotations)
             split_ids: list[str] = []
 
@@ -375,7 +415,7 @@ class VocConverter(FormatConverter):
                 copy2(image.path, voc_images_dir / image.file_name)
 
                 annotations = grouped.get(image.image_id, [])
-                tree = _create_annotation_xml(image, annotations, config.class_names)
+                tree = _create_annotation_xml(image, annotations, params.class_names)
                 xml_path = voc_annotations_dir / f"{image_id}.xml"
                 tree.write(xml_path, encoding="utf-8", xml_declaration=True)
 

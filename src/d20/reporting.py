@@ -1,45 +1,67 @@
 """FiftyOne dataset export functionality."""
 
-from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 import fiftyone as fo
 from loguru import logger
 
-from d20.config import ConversionConfig
 from d20.formats import get_converter
-from d20.types import DatasetSplit
+from d20.types import (
+    CocoDetectedParams,
+    DetectedParams,
+    ExportOptions,
+    Split,
+    VocDetectedParams,
+    YoloDetectedParams,
+)
 
 
-def export_to_fiftyone(
-    dataset_format: str,
-    input_path: Path | list[Path],
-    config: ConversionConfig,
-    split: str | None = None,
-    **read_options: Any,
-) -> None:
-    """Export a dataset to FiftyOne App for visual inspection.
+def _get_format_from_params(params: DetectedParams) -> str:
+    """Get format name from DetectedParams type.
 
     Args:
-        dataset_format: Format of the dataset (coco, yolo, voc)
-        input_path: Path to input dataset (directory, file, or list of paths)
-        config: Conversion configuration
-        split: Specific split to export (default: all splits)
-        **read_options: Additional options for reading (format-specific)
+        params: DetectedParams instance
+
+    Returns:
+        Format name (e.g., 'yolo', 'coco', 'voc')
 
     """
-    dataset_format = dataset_format.lower()
-    converter = get_converter(dataset_format)
+    if isinstance(params, YoloDetectedParams):
+        return "yolo"
+    if isinstance(params, CocoDetectedParams):
+        return "coco"
+    if isinstance(params, VocDetectedParams):
+        return "voc"
+    msg = f"Unknown DetectedParams type: {type(params)}"
+    raise ValueError(msg)
 
-    # Read dataset using format converter
-    splits = converter.read(input_path, config, **read_options)
 
-    logger.info("Read {} split(s) from dataset", len(splits))
-    for split_data in splits:
+def export_fiftyone(
+    params: DetectedParams,
+    options: ExportOptions,
+) -> None:
+    """Export dataset to FiftyOne App for visual inspection.
+
+    Uses DetectedParams from autodetect() and export-specific options.
+    Internally calls read() to get Dataset, then exports to FiftyOne.
+
+    Args:
+        params: DetectedParams from converter.autodetect() (contains format info)
+        options: Export-specific options (split name, etc.)
+
+    """
+    # Determine format from params type
+    format_name = _get_format_from_params(params)
+    converter = get_converter(format_name)
+
+    # Read dataset using DetectedParams
+    dataset = converter.read(params)
+
+    logger.info("Read {} split(s) from dataset", len(dataset.splits))
+    for split_name, split_data in dataset.splits.items():
         logger.info(
             "Split '{}' has {} images and {} annotations",
-            split_data.name,
+            split_name,
             len(split_data.images),
             len(split_data.annotations),
         )
@@ -47,27 +69,33 @@ def export_to_fiftyone(
             logger.warning(
                 "Split '{}' has no images. This usually means the annotation file "
                 "(JSON/YAML/XML) is empty or doesn't contain image entries.",
-                split_data.name,
+                split_name,
             )
 
-    # Filter by split if specified
-    if split:
-        splits = [s for s in splits if s.name == split]
-        if not splits:
-            logger.warning("Split '{}' not found in dataset", split)
+    # Filter splits if needed
+    splits_to_export = dataset.splits
+    if options.split:
+        if options.split not in splits_to_export:
+            logger.warning("Split '{}' not found in dataset", options.split)
             return
+        splits_to_export = {options.split: dataset.splits[options.split]}
 
     # Export each split to FiftyOne
+    # class_names from params (required for labeling)
+    class_names = params.class_names or []
+    if not class_names:
+        logger.warning("No class names available in params, labels may not be displayed correctly")
+
     created_datasets = []
-    for dataset_split in splits:
+    for split_name, dataset_split in splits_to_export.items():
         if not dataset_split.images:
-            logger.warning("Split '{}' has no images, skipping", dataset_split.name)
+            logger.warning("Split '{}' has no images, skipping", split_name)
             continue
-        dataset_name = f"d20-{dataset_format}-{dataset_split.name}-{uuid4().hex}"
-        logger.info("Exporting {} split '{}' to FiftyOne as '{}'", dataset_format, dataset_split.name, dataset_name)
+        dataset_name = f"d20-{format_name}-{split_name}-{uuid4().hex}"
+        logger.info("Exporting {} split '{}' to FiftyOne as '{}'", format_name, split_name, dataset_name)
 
         # Create FiftyOne dataset from splits
-        fo_dataset = _create_dataset_from_splits(dataset_format, dataset_split, config, dataset_name)
+        fo_dataset = _create_dataset_from_splits(format_name, dataset_split, class_names, dataset_name)
 
         # Ensure dataset is persisted
         fo_dataset.persistent = True
@@ -91,16 +119,16 @@ def export_to_fiftyone(
 
 def _create_dataset_from_splits(
     _dataset_format: str,
-    dataset_split: DatasetSplit,
-    config: ConversionConfig,
+    dataset_split: Split,
+    class_names: list[str],
     dataset_name: str,
 ) -> fo.Dataset:  # type:ignore[name-defined]
-    """Create a FiftyOne dataset from DatasetSplit objects.
+    """Create a FiftyOne dataset from Split object.
 
     Args:
         dataset_format: Format of the dataset
         dataset_split: Dataset split to convert
-        config: Conversion configuration
+        class_names: List of class names for labeling
         dataset_name: Name for the FiftyOne dataset
 
     Returns:
@@ -139,11 +167,7 @@ def _create_dataset_from_splits(
             w_norm = max(0.0, min(1.0, w_norm))
             h_norm = max(0.0, min(1.0, h_norm))
 
-            label = (
-                config.class_names[ann.category_id]
-                if ann.category_id < len(config.class_names)
-                else f"class_{ann.category_id}"
-            )
+            label = class_names[ann.category_id] if ann.category_id < len(class_names) else f"class_{ann.category_id}"
 
             detections.append(
                 fo.Detection(  # type: ignore[attr-defined]

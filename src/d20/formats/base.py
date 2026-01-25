@@ -8,8 +8,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from d20.config import ConversionConfig
-    from d20.types import DatasetSplit
+    from d20.types import Dataset, DetectedParams, WriteDetectedParams
 else:
     pass
 
@@ -42,29 +41,38 @@ class FormatConverter(ABC):
         ...
 
     @abstractmethod
-    def read(
+    def autodetect(
         self,
         input_path: Path | list[Path],
-        config: ConversionConfig,
-        **options: Any,
-    ) -> list[DatasetSplit]:
-        """Read a dataset from the specified path(s).
+    ) -> DetectedParams:
+        """Autodetect dataset parameters without reading the full dataset.
 
-        Each converter can interpret input_path differently:
-        - YOLO: if Path points to .yaml file, reads from it
-        - COCO: if list[Path], reads each JSON as a separate split
-        - VOC: always expects a directory
+        Returns format-specific DetectedParams implementation (e.g., YoloDetectedParams).
 
         Args:
             input_path: Path to dataset (directory, file, or list of paths)
-            config: Conversion configuration
-            **options: Format-specific options:
-                - yolo: yaml_path (if not specified, looks for data.yaml in input_path)
-                - coco: split_files (dict[str, Path] for explicit file mapping)
-                - voc: auto_detect_splits (bool)
 
         Returns:
-            List of dataset splits
+            Format-specific DetectedParams implementation
+
+        """
+        ...
+
+    @abstractmethod
+    def read(
+        self,
+        params: DetectedParams,
+    ) -> Dataset:
+        """Read dataset using format-specific DetectedParams.
+
+        Takes format-specific DetectedParams implementation with all necessary information.
+        No options parameter, no ConversionConfig (eliminated from architecture).
+
+        Args:
+            params: Format-specific DetectedParams implementation (e.g., YoloDetectedParams)
+
+        Returns:
+            Dataset containing all splits
 
         """
         ...
@@ -73,17 +81,19 @@ class FormatConverter(ABC):
     def write(
         self,
         output_dir: Path,
-        config: ConversionConfig,
-        splits: list[DatasetSplit],
-        **options: Any,
+        dataset: Dataset,
+        params: WriteDetectedParams,
     ) -> None:
-        """Write a dataset to the specified directory.
+        """Write dataset from internal Dataset format.
+
+        Converts ONLY from universal Dataset format to target format.
+        Takes format-specific WriteDetectedParams implementation.
+        No options parameter, no ConversionConfig (eliminated from architecture).
 
         Args:
             output_dir: Output directory path
-            config: Conversion configuration
-            splits: List of dataset splits to write
-            **options: Format-specific options
+            dataset: Universal Dataset format containing all splits
+            params: Format-specific WriteDetectedParams implementation
 
         """
         ...

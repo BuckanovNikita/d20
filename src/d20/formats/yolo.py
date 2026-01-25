@@ -11,12 +11,17 @@ from loguru import logger
 from PIL import Image
 
 from d20.formats.base import FormatConverter, register_converter
-from d20.types import Annotation, DatasetSplit, ImageInfo
+from d20.types import (
+    Annotation,
+    Dataset,
+    ImageInfo,
+    Split,
+    YoloDetectedParams,
+    YoloWriteDetectedParams,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-
-from d20.config import ConversionConfig
 
 
 class UnknownClassIdError(ValueError):
@@ -229,59 +234,116 @@ class YoloConverter(FormatConverter):
         splits = [split_name for split_name in ("train", "val", "test") if data.get(split_name)]
         return splits if splits else ["data"]
 
-    def read(
+    def autodetect(
         self,
         input_path: Path | list[Path],
-        config: ConversionConfig,
-        **options: Any,
-    ) -> list[DatasetSplit]:
-        """Read a YOLO format dataset from disk.
+    ) -> YoloDetectedParams:
+        """Autodetect YOLO dataset parameters without reading the full dataset.
 
         Args:
             input_path: Path to dataset directory or YAML file
-            config: Conversion configuration
-            **options: Additional options:
-                - yaml_path: Explicit path to YAML file
 
         Returns:
-            List of dataset splits
+            YoloDetectedParams with detected parameters
 
         """
-        normalized_path, _updated_options = self._normalize_input_path(input_path, **options)
-        path = Path(normalized_path)
+        # Normalize input path
+        if isinstance(input_path, list):
+            if len(input_path) > 0:
+                input_path = input_path[0]
+            else:
+                raise EmptyPathListError
+
+        path = Path(input_path)
+        yaml_path: Path | None = None
+        dataset_root: Path | None = None
+        class_names: list[str] | None = None
+        splits: list[str] | None = None
 
         # Check if it's a YAML file
         if path.suffix.lower() in (".yaml", ".yml") and path.exists():
+            yaml_path = path
             dataset_root, yaml_data = self._read_from_yaml(path)
+            try:
+                class_names = self._load_class_names_from_yaml(yaml_data)
+                splits = self._detect_splits_from_yaml(yaml_data)
+            except (MissingYoloNamesError, UnsupportedYoloNamesStructureError):
+                # If YAML doesn't have names, we can't detect class_names
+                pass
+        elif path.is_dir():
+            # Look for data.yaml in directory
+            potential_yaml = path / "data.yaml"
+            if potential_yaml.exists():
+                yaml_path = potential_yaml
+                dataset_root, yaml_data = self._read_from_yaml(potential_yaml)
+                try:
+                    class_names = self._load_class_names_from_yaml(yaml_data)
+                    splits = self._detect_splits_from_yaml(yaml_data)
+                except (MissingYoloNamesError, UnsupportedYoloNamesStructureError):
+                    # If YAML doesn't have names, we can't detect class_names
+                    pass
+            else:
+                dataset_root = path
 
-            # Override config with YAML data if available
+        # Default directory structure detection
+        images_dir: str | None = "images"
+        labels_dir: str | None = "labels"
+        annotations_dir: str | None = None  # YOLO doesn't use annotations_dir
+
+        return YoloDetectedParams(
+            input_path=input_path,
+            class_names=class_names,
+            splits=splits,
+            images_dir=images_dir,
+            labels_dir=labels_dir,
+            annotations_dir=annotations_dir,
+            yaml_path=yaml_path,
+            dataset_root=dataset_root,
+        )
+
+    def read(
+        self,
+        params: YoloDetectedParams,  # type: ignore[override]
+    ) -> Dataset:
+        """Read a YOLO format dataset from disk.
+
+        Args:
+            params: YoloDetectedParams with all necessary information
+
+        Returns:
+            Dataset containing all splits
+
+        """
+        # Determine input directory and configuration
+        if params.yaml_path and params.yaml_path.exists():
+            dataset_root, yaml_data = self._read_from_yaml(params.yaml_path)
             class_names = self._load_class_names_from_yaml(yaml_data)
-            splits_from_yaml = self._detect_splits_from_yaml(yaml_data)
-
-            # Create temporary config with YAML data
-            yaml_config = ConversionConfig(
-                class_names=class_names,
-                splits=splits_from_yaml,
-                images_dir=config.images_dir,
-                labels_dir=config.labels_dir,
-                annotations_dir=config.annotations_dir,
-            )
-
+            splits = self._detect_splits_from_yaml(yaml_data)
             input_dir = dataset_root
-            config_to_use = yaml_config
+        elif params.dataset_root:
+            input_dir = params.dataset_root
+            class_names = params.class_names or []
+            splits = params.splits or ["data"]
         else:
-            # Use directory-based approach
-            input_dir = path
-            config_to_use = config
+            # Fallback to input_path
+            input_dir = Path(params.input_path[0]) if isinstance(params.input_path, list) else Path(params.input_path)
+            class_names = params.class_names or []
+            splits = params.splits or ["data"]
 
-        splits: list[DatasetSplit] = []
-        for split in config_to_use.split_names:
-            images_dir = _resolve_split_dir(input_dir / config_to_use.images_dir, split)
-            labels_dir = _resolve_split_dir(input_dir / config_to_use.labels_dir, split)
+        if not class_names:
+            raise MissingYoloNamesError
+
+        images_dir_name = params.images_dir or "images"
+        labels_dir_name = params.labels_dir or "labels"
+
+        splits_dict: dict[str, Split] = {}
+        for split_name in splits:
+            images_dir = _resolve_split_dir(input_dir / images_dir_name, split_name)
+            labels_dir = _resolve_split_dir(input_dir / labels_dir_name, split_name)
 
             if not images_dir.exists():
                 logger.warning("YOLO images directory missing: {}", images_dir)
-                splits.append(DatasetSplit(name=split, images=[], annotations=[]))
+                splits_dict[split_name] = Split(name=split_name, images=[], annotations=[])
                 continue
 
             images = [_read_image_info(path, images_dir) for path in _iter_images(images_dir)]
@@ -302,7 +364,7 @@ class YoloConverter(FormatConverter):
                         continue
 
                     class_id = int(parts[0])
-                    if class_id >= len(config_to_use.class_names):
+                    if class_id >= len(class_names):
                         raise UnknownClassIdError(class_id)
 
                     x_center = float(parts[1])
@@ -323,31 +385,35 @@ class YoloConverter(FormatConverter):
                         ),
                     )
 
-            splits.append(DatasetSplit(name=split, images=images, annotations=annotations))
+            splits_dict[split_name] = Split(name=split_name, images=images, annotations=annotations)
 
-        return splits
+        return Dataset(splits=splits_dict, class_names=class_names)
 
     def write(
         self,
         output_dir: Path,
-        config: ConversionConfig,
-        splits: list[DatasetSplit],
-        **_options: Any,
+        dataset: Dataset,
+        params: YoloWriteDetectedParams,  # type: ignore[override]
     ) -> None:
         """Write a dataset in YOLO format to disk.
 
         Args:
             output_dir: Output directory path
-            config: Conversion configuration
-            splits: List of dataset splits to write
-            **options: Additional options (unused)
+            dataset: Dataset containing all splits
+            params: YoloWriteDetectedParams with write configuration
 
         """
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        for split in splits:
-            images_dir = output_dir / config.images_dir
-            labels_dir = output_dir / config.labels_dir
+        splits_to_write = params.splits or list(dataset.splits.keys())
+        for split_name in splits_to_write:
+            if split_name not in dataset.splits:
+                logger.warning("Split '{}' not found in dataset, skipping", split_name)
+                continue
+
+            split = dataset.splits[split_name]
+            images_dir = output_dir / params.images_dir
+            labels_dir = output_dir / params.labels_dir
             if split.name != "data":
                 images_dir = images_dir / split.name
                 labels_dir = labels_dir / split.name
@@ -374,20 +440,21 @@ class YoloConverter(FormatConverter):
                     lines.append(f"{annotation.category_id} {x_center:.6f} {y_center:.6f} {w_norm:.6f} {h_norm:.6f}")
                 label_path.write_text("\n".join(lines))
 
-        self._write_data_yaml(output_dir, config)
+        self._write_data_yaml(output_dir, params)
 
-    def _write_data_yaml(self, output_dir: Path, config: ConversionConfig) -> None:
+    def _write_data_yaml(self, output_dir: Path, params: YoloWriteDetectedParams) -> None:
         """Write data.yaml file."""
         data = {
             "path": ".",
-            "names": config.class_names,
-            "nc": len(config.class_names),
+            "names": params.class_names,
+            "nc": len(params.class_names),
         }
-        for split in config.split_names:
+        splits_to_write = params.splits or ["data"]
+        for split in splits_to_write:
             if split == "data":
-                data[split] = f"{config.images_dir}"
+                data[split] = f"{params.images_dir}"
             else:
-                data[split] = f"{config.images_dir}/{split}"
+                data[split] = f"{params.images_dir}/{split}"
 
         (output_dir / "data.yaml").write_text(
             yaml_safe_dump(data),

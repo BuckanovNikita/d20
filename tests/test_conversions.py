@@ -11,8 +11,28 @@ import pytest
 import yaml
 from defusedxml import ElementTree
 
-from d20.config import load_config
-from d20.convert import convert_dataset
+from d20.convert import ConversionRequest, convert_dataset
+from d20.formats import get_converter
+from d20.types import (
+    CocoDetectedParams,
+    CocoWriteDetectedParams,
+    VocDetectedParams,
+    VocWriteDetectedParams,
+    YoloDetectedParams,
+    YoloWriteDetectedParams,
+)
+
+
+@dataclass
+class WriteParamsConfig:
+    """Configuration for building WriteDetectedParams."""
+
+    class_names: list[str]
+    splits: list[str]
+    images_dir: str
+    labels_dir: str
+    annotations_dir: str = "annotations"
+
 
 IMAGE_EXTS = {
     ".avif",
@@ -141,60 +161,71 @@ def _count_voc_annotations(annotations_dir: Path, split_ids: list[str]) -> int:
     return total
 
 
-def _write_config(
-    tmp_path: Path,
-    class_names: list[str],
-    splits: list[str],
-    images_dir: str,
-    labels_dir: str,
-) -> Path:
-    config_path = tmp_path / "conversion.yaml"
-    payload = {
-        "class_names": class_names,
-        "splits": splits,
-        "images_dir": images_dir,
-        "labels_dir": labels_dir,
-        "annotations_dir": "annotations",
-    }
-    config_path.write_text(yaml.safe_dump(payload, sort_keys=False))
-    return config_path
+def _build_write_params(
+    format_name: str,
+    config: WriteParamsConfig,
+) -> CocoWriteDetectedParams | YoloWriteDetectedParams | VocWriteDetectedParams:
+    """Build WriteDetectedParams for testing."""
+    if format_name == "yolo":
+        return YoloWriteDetectedParams(
+            class_names=config.class_names,
+            splits=config.splits,
+            images_dir=config.images_dir,
+            labels_dir=config.labels_dir,
+            annotations_dir=config.annotations_dir,
+        )
+    if format_name == "coco":
+        return CocoWriteDetectedParams(
+            class_names=config.class_names,
+            splits=config.splits,
+            images_dir=config.images_dir,
+            labels_dir=config.labels_dir,
+            annotations_dir=config.annotations_dir,
+        )
+    if format_name == "voc":
+        return VocWriteDetectedParams(
+            class_names=config.class_names,
+            splits=config.splits,
+            images_dir=config.images_dir,
+            labels_dir=config.labels_dir,
+            annotations_dir=config.annotations_dir,
+        )
+    msg = f"Unknown format: {format_name}"
+    raise ValueError(msg)
 
 
-@pytest.mark.parametrize("yaml_path", DATASET_YAMLS)
-def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:
-    """Test roundtrip conversion: YOLO -> COCO -> VOC -> YOLO."""
-    fixture = _resolve_yolo_fixture(yaml_path)
-    fixture_root = fixture.root
-    data = fixture.data
+@dataclass
+class VerificationConfig:
+    """Configuration for verification."""
 
-    class_names = _load_class_names(data)
-    images_dir = "images"
-    labels_dir = "labels"
-    splits = _detect_splits(fixture_root, images_dir)
-    config_path = _write_config(tmp_path, class_names, splits, images_dir, labels_dir)
-    config = load_config(config_path)
+    fixture_root: Path
+    splits: list[str]
+    images_dir: str
+    labels_dir: str
+    class_names: list[str] | None = None
 
-    coco_dir = tmp_path / "coco"
-    convert_dataset("yolo", "coco", fixture_root, coco_dir, config)
 
+def _verify_coco_conversion(coco_dir: Path, config: VerificationConfig) -> None:
+    """Verify COCO conversion results."""
     for split in config.splits:
-        input_images_dir = _split_path(fixture_root, config.images_dir, split)
-        input_labels_dir = _split_path(fixture_root, config.labels_dir, split)
+        input_images_dir = _split_path(config.fixture_root, config.images_dir, split)
+        input_labels_dir = _split_path(config.fixture_root, config.labels_dir, split)
         expected_images = _count_images(input_images_dir)
         expected_annotations = _count_yolo_annotations(input_labels_dir)
 
         coco_images_dir = _split_path(coco_dir, config.images_dir, split)
-        coco_labels_path = coco_dir / config.annotations_dir / f"{split}.json"
+        coco_labels_path = coco_dir / "annotations" / f"{split}.json"
 
         assert coco_images_dir.exists()
         assert coco_labels_path.exists()
         assert _read_coco_image_count(coco_labels_path) == expected_images
         assert _count_coco_annotations(coco_labels_path) == expected_annotations
-        assert _read_coco_category_count(coco_labels_path) == len(config.class_names)
+        if config.class_names:
+            assert _read_coco_category_count(coco_labels_path) == len(config.class_names)
 
-    voc_dir = tmp_path / "voc"
-    convert_dataset("coco", "voc", coco_dir, voc_dir, config)
 
+def _verify_voc_conversion(voc_dir: Path, config: VerificationConfig) -> None:
+    """Verify VOC conversion results."""
     voc_images_dir = voc_dir / "JPEGImages"
     voc_annotations_dir = voc_dir / "Annotations"
     voc_image_sets_dir = voc_dir / "ImageSets" / "Main"
@@ -205,20 +236,20 @@ def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:
 
     for split in config.splits:
         split_ids = _read_voc_split_ids(voc_image_sets_dir, split)
-        expected_images = _count_images(_split_path(fixture_root, config.images_dir, split))
+        expected_images = _count_images(_split_path(config.fixture_root, config.images_dir, split))
         expected_annotations = _count_yolo_annotations(
-            _split_path(fixture_root, config.labels_dir, split),
+            _split_path(config.fixture_root, config.labels_dir, split),
         )
 
         assert len(split_ids) == expected_images
         assert _count_voc_annotations(voc_annotations_dir, split_ids) == expected_annotations
 
-    yolo_dir = tmp_path / "yolo"
-    convert_dataset("voc", "yolo", voc_dir, yolo_dir, config)
 
+def _verify_yolo_conversion(yolo_dir: Path, config: VerificationConfig) -> None:
+    """Verify YOLO conversion results."""
     for split in config.splits:
-        input_images_dir = _split_path(fixture_root, config.images_dir, split)
-        input_labels_dir = _split_path(fixture_root, config.labels_dir, split)
+        input_images_dir = _split_path(config.fixture_root, config.images_dir, split)
+        input_labels_dir = _split_path(config.fixture_root, config.labels_dir, split)
         expected_images = _count_images(input_images_dir)
         expected_annotations = _count_yolo_annotations(input_labels_dir)
 
@@ -232,6 +263,140 @@ def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:
 
 
 @pytest.mark.parametrize("yaml_path", DATASET_YAMLS)
+def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:
+    """Test roundtrip conversion: YOLO -> COCO -> VOC -> YOLO."""
+    fixture = _resolve_yolo_fixture(yaml_path)
+    fixture_root = fixture.root
+    data = fixture.data
+
+    class_names = _load_class_names(data)
+    images_dir = "images"
+    labels_dir = "labels"
+    splits = _detect_splits(fixture_root, images_dir)
+
+    # Autodetect YOLO parameters
+    yolo_converter = get_converter("yolo")
+    detected = yolo_converter.autodetect(fixture_root)
+    # Type narrowing: autodetect returns YoloDetectedParams for yolo converter
+    if not isinstance(detected, YoloDetectedParams):
+        msg = f"Expected YoloDetectedParams, got {type(detected)}"
+        raise TypeError(msg)
+    read_params = YoloDetectedParams(
+        input_path=detected.input_path,
+        class_names=class_names,
+        splits=splits,
+        images_dir=images_dir,
+        labels_dir=labels_dir,
+        annotations_dir=detected.annotations_dir,
+        yaml_path=detected.yaml_path,
+        dataset_root=detected.dataset_root,
+    )
+
+    config = WriteParamsConfig(class_names=class_names, splits=splits, images_dir=images_dir, labels_dir=labels_dir)
+    write_params = _build_write_params("coco", config)
+
+    coco_dir = tmp_path / "coco"
+    request = ConversionRequest(
+        input_format="yolo",
+        output_format="coco",
+        input_path=fixture_root,
+        output_dir=coco_dir,
+        read_params=read_params,
+        write_params=write_params,
+    )
+    convert_dataset(request)
+    coco_config = VerificationConfig(
+        fixture_root=fixture_root,
+        splits=splits,
+        images_dir=images_dir,
+        labels_dir=labels_dir,
+        class_names=class_names,
+    )
+    _verify_coco_conversion(coco_dir, coco_config)
+
+    # Autodetect COCO parameters
+    coco_converter = get_converter("coco")
+    coco_detected = coco_converter.autodetect(coco_dir)
+    # Type narrowing: autodetect returns CocoDetectedParams for coco converter
+    if not isinstance(coco_detected, CocoDetectedParams):
+        msg = f"Expected CocoDetectedParams, got {type(coco_detected)}"
+        raise TypeError(msg)
+    coco_read_params = CocoDetectedParams(
+        input_path=coco_detected.input_path,
+        class_names=class_names,
+        splits=splits,
+        images_dir=images_dir,
+        labels_dir=coco_detected.labels_dir,
+        annotations_dir="annotations",
+        split_files=coco_detected.split_files,
+    )
+
+    voc_config = WriteParamsConfig(class_names=class_names, splits=splits, images_dir=images_dir, labels_dir=labels_dir)
+    voc_write_params = _build_write_params("voc", voc_config)
+
+    voc_dir = tmp_path / "voc"
+    request = ConversionRequest(
+        input_format="coco",
+        output_format="voc",
+        input_path=coco_dir,
+        output_dir=voc_dir,
+        read_params=coco_read_params,
+        write_params=voc_write_params,
+    )
+    convert_dataset(request)
+    voc_config_verify = VerificationConfig(
+        fixture_root=fixture_root,
+        splits=splits,
+        images_dir=images_dir,
+        labels_dir=labels_dir,
+    )
+    _verify_voc_conversion(voc_dir, voc_config_verify)
+
+    # Autodetect VOC parameters
+    voc_converter = get_converter("voc")
+    voc_detected = voc_converter.autodetect(voc_dir)
+    # Type narrowing: autodetect returns VocDetectedParams for voc converter
+    if not isinstance(voc_detected, VocDetectedParams):
+        msg = f"Expected VocDetectedParams, got {type(voc_detected)}"
+        raise TypeError(msg)
+    voc_read_params = VocDetectedParams(
+        input_path=voc_detected.input_path,
+        class_names=class_names,
+        splits=splits,
+        images_dir=voc_detected.images_dir,
+        labels_dir=voc_detected.labels_dir,
+        annotations_dir=voc_detected.annotations_dir,
+        auto_detect_splits=voc_detected.auto_detect_splits,
+    )
+
+    yolo_config = WriteParamsConfig(
+        class_names=class_names,
+        splits=splits,
+        images_dir=images_dir,
+        labels_dir=labels_dir,
+    )
+    yolo_write_params = _build_write_params("yolo", yolo_config)
+
+    yolo_dir = tmp_path / "yolo"
+    request = ConversionRequest(
+        input_format="voc",
+        output_format="yolo",
+        input_path=voc_dir,
+        output_dir=yolo_dir,
+        read_params=voc_read_params,
+        write_params=yolo_write_params,
+    )
+    convert_dataset(request)
+    yolo_config_verify = VerificationConfig(
+        fixture_root=fixture_root,
+        splits=splits,
+        images_dir=images_dir,
+        labels_dir=labels_dir,
+    )
+    _verify_yolo_conversion(yolo_dir, yolo_config_verify)
+
+
+@pytest.mark.parametrize("yaml_path", DATASET_YAMLS)
 def test_yolo_read_from_yaml(tmp_path: Path, yaml_path: Path) -> None:
     """Test reading YOLO dataset directly from YAML file."""
     fixture = _resolve_yolo_fixture(yaml_path)
@@ -241,15 +406,42 @@ def test_yolo_read_from_yaml(tmp_path: Path, yaml_path: Path) -> None:
     images_dir = "images"
     labels_dir = "labels"
     splits = _detect_splits(fixture.root, images_dir)
-    config_path = _write_config(tmp_path, class_names, splits, images_dir, labels_dir)
-    config = load_config(config_path)
+
+    # Autodetect YOLO parameters from YAML file
+    yolo_converter = get_converter("yolo")
+    detected = yolo_converter.autodetect(yaml_path)
+    # Type narrowing: autodetect returns YoloDetectedParams for yolo converter
+    if not isinstance(detected, YoloDetectedParams):
+        msg = f"Expected YoloDetectedParams, got {type(detected)}"
+        raise TypeError(msg)
+    read_params = YoloDetectedParams(
+        input_path=detected.input_path,
+        class_names=class_names,
+        splits=splits,
+        images_dir=images_dir,
+        labels_dir=labels_dir,
+        annotations_dir=detected.annotations_dir,
+        yaml_path=detected.yaml_path,
+        dataset_root=detected.dataset_root,
+    )
+
+    config = WriteParamsConfig(class_names=class_names, splits=splits, images_dir=images_dir, labels_dir=labels_dir)
+    write_params = _build_write_params("coco", config)
 
     # Test reading from YAML file
     coco_dir = tmp_path / "coco_from_yaml"
-    convert_dataset("yolo", "coco", yaml_path, coco_dir, config)
+    request = ConversionRequest(
+        input_format="yolo",
+        output_format="coco",
+        input_path=yaml_path,
+        output_dir=coco_dir,
+        read_params=read_params,
+        write_params=write_params,
+    )
+    convert_dataset(request)
 
     # Verify conversion worked
     for split in splits:
-        coco_labels_path = coco_dir / config.annotations_dir / f"{split}.json"
+        coco_labels_path = coco_dir / "annotations" / f"{split}.json"
         assert coco_labels_path.exists()
         assert _read_coco_image_count(coco_labels_path) > 0

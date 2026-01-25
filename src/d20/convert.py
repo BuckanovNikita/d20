@@ -2,15 +2,29 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from d20.formats import FormatNotRegisteredError, get_converter
 
 if TYPE_CHECKING:
-    from d20.config import ConversionConfig
+    from pathlib import Path
+
+    from d20.types import DetectedParams, WriteDetectedParams
+
+
+@dataclass
+class ConversionRequest:
+    """Request parameters for dataset conversion."""
+
+    input_format: str
+    output_format: str
+    input_path: "Path | list[Path]"  # noqa: UP037
+    output_dir: "Path"  # noqa: UP037
+    read_params: "DetectedParams"  # noqa: UP037
+    write_params: "WriteDetectedParams"  # noqa: UP037
 
 
 class UnsupportedInputFormatError(ValueError):
@@ -31,42 +45,29 @@ class UnsupportedOutputFormatError(ValueError):
         self.output_format = output_format
 
 
-def convert_dataset(
-    input_format: str,
-    output_format: str,
-    input_path: Path | list[Path],
-    output_dir: Path,
-    config: ConversionConfig,
-    **read_options: Any,
-) -> None:
+def convert_dataset(request: ConversionRequest) -> None:
     """Convert a dataset from one format to another.
 
     Args:
-        input_format: Input format name (e.g., 'coco', 'voc', 'yolo')
-        output_format: Output format name (e.g., 'coco', 'voc', 'yolo')
-        input_path: Path to input dataset (directory, file, or list of paths)
-        output_dir: Output directory path
-        config: Conversion configuration
-        **read_options: Additional options for reading (format-specific)
+        request: ConversionRequest with all conversion parameters
 
     """
-    input_format = input_format.lower()
-    output_format = output_format.lower()
+    _convert_dataset_impl(request)
+
+
+def _convert_dataset_impl(request: ConversionRequest) -> None:
+    """Implement dataset conversion."""
+    try:
+        reader = get_converter(request.input_format)
+    except FormatNotRegisteredError as e:
+        raise UnsupportedInputFormatError(request.input_format) from e
 
     try:
-        reader = get_converter(input_format)
+        writer = get_converter(request.output_format)
     except FormatNotRegisteredError as e:
-        raise UnsupportedInputFormatError(input_format) from e
+        raise UnsupportedOutputFormatError(request.output_format) from e
 
-    try:
-        writer = get_converter(output_format)
-    except FormatNotRegisteredError as e:
-        raise UnsupportedOutputFormatError(output_format) from e
-
-    input_path = Path(input_path) if not isinstance(input_path, list) else [Path(p) for p in input_path]
-    output_dir = Path(output_dir)
-
-    logger.info("Reading {} dataset from {}", input_format, input_path)
-    splits = reader.read(input_path, config, **read_options)
-    logger.info("Writing {} dataset to {}", output_format, output_dir)
-    writer.write(output_dir, config, splits)
+    logger.info("Reading {} dataset from {}", request.input_format, request.input_path)
+    dataset = reader.read(request.read_params)
+    logger.info("Writing {} dataset to {}", request.output_format, request.output_dir)
+    writer.write(request.output_dir, dataset, request.write_params)

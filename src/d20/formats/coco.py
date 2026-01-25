@@ -5,15 +5,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from shutil import copy2
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from loguru import logger
 
 from d20.formats.base import FormatConverter, register_converter
-from d20.types import Annotation, DatasetSplit, ImageInfo
-
-if TYPE_CHECKING:
-    from d20.config import ConversionConfig
+from d20.types import (
+    Annotation,
+    CocoDetectedParams,
+    CocoWriteDetectedParams,
+    Dataset,
+    ImageInfo,
+    Split,
+)
 
 
 class COCOCategoryMissingNameError(ValueError):
@@ -46,6 +50,37 @@ def _resolve_split_dir(base_dir: Path, split: str) -> Path:
     return split_dir if split_dir.exists() else base_dir
 
 
+def _extract_categories_from_json_file(json_path: Path) -> tuple[set[str], dict[str, int]]:
+    """Extract category names and mapping from a COCO JSON file.
+
+    Args:
+        json_path: Path to JSON file
+
+    Returns:
+        Tuple of (set of category names, dict mapping name to id)
+
+    """
+    category_names: set[str] = set()
+    category_map: dict[str, int] = {}
+    try:
+        data = json.loads(json_path.read_text())
+        categories = data.get("categories", [])
+        for category in categories:
+            name = category.get("name")
+            cat_id = category.get("id")
+            if name:
+                category_names.add(name)
+                if cat_id is not None and name not in category_map:
+                    category_map[name] = int(cat_id)
+    except json.JSONDecodeError as e:
+        logger.warning("Failed to parse JSON file {}: {}", json_path, e)
+    except OSError as e:
+        logger.warning("Failed to read JSON file {}: {}", json_path, e)
+    except (KeyError, TypeError, ValueError) as e:
+        logger.warning("Unexpected structure in JSON file {}: {}", json_path, e)
+    return category_names, category_map
+
+
 @register_converter("coco")
 class CocoConverter(FormatConverter):
     """Converter for COCO format datasets."""
@@ -55,19 +90,100 @@ class CocoConverter(FormatConverter):
         """Return the format name."""
         return "coco"
 
+    def autodetect(
+        self,
+        input_path: Path | list[Path],
+    ) -> CocoDetectedParams:
+        """Autodetect COCO dataset parameters without reading the full dataset.
+
+        Args:
+            input_path: Path to dataset directory or list of JSON file paths
+
+        Returns:
+            CocoDetectedParams with detected parameters
+
+        """
+        class_names: list[str] | None = None
+        splits: list[str] | None = None
+        split_files: dict[str, Path] | None = None
+
+        # Handle list of paths (explicit JSON files)
+        if isinstance(input_path, list):
+            split_files = {}
+            all_category_names: set[str] = set()
+            category_map: dict[str, int] = {}
+
+            for json_path in input_path:
+                path = Path(json_path)
+                split_name = path.stem
+                split_files[split_name] = path
+
+                # Extract categories from JSON
+                names, mapping = _extract_categories_from_json_file(path)
+                all_category_names.update(names)
+                category_map.update(mapping)
+
+            if all_category_names:
+                if category_map:
+                    class_names = sorted(all_category_names, key=lambda n: category_map.get(n, 999))
+                else:
+                    class_names = sorted(all_category_names)
+            splits = list(split_files.keys())
+        else:
+            # Directory-based approach
+            input_dir = Path(input_path)
+            annotations_dir = "annotations"
+
+            # Detect splits from JSON files in annotations directory
+            annotations_path = input_dir / annotations_dir
+            if annotations_path.exists():
+                json_files = list(annotations_path.glob("*.json"))
+                if json_files:
+                    splits = [f.stem for f in json_files]
+                    dir_category_names: set[str] = set()
+                    dir_category_map: dict[str, int] = {}
+
+                    # Extract categories from all JSON files
+                    for json_path in json_files:
+                        names, mapping = _extract_categories_from_json_file(json_path)
+                        dir_category_names.update(names)
+                        dir_category_map.update(mapping)
+
+                    if dir_category_names:
+                        if dir_category_map:
+                            class_names = sorted(dir_category_names, key=lambda n: dir_category_map.get(n, 999))
+                        else:
+                            class_names = sorted(dir_category_names)
+
+        images_dir: str | None = "images"
+        labels_dir: str | None = None  # COCO doesn't use labels_dir
+        final_annotations_dir: str | None = "annotations"
+
+        return CocoDetectedParams(
+            input_path=input_path,
+            class_names=class_names,
+            splits=splits,
+            images_dir=images_dir,
+            labels_dir=labels_dir,
+            annotations_dir=final_annotations_dir,
+            split_files=split_files,
+        )
+
     def _read_split_from_json(
         self,
         json_path: Path,
         input_dir: Path,
-        config: ConversionConfig,
+        class_names: list[str],
+        images_dir_name: str,
         split_name: str,
-    ) -> DatasetSplit:
+    ) -> Split:
         """Read a single split from a COCO JSON file.
 
         Args:
             json_path: Path to COCO JSON file
             input_dir: Base input directory
-            config: Conversion configuration
+            class_names: List of class names
+            images_dir_name: Name of images directory
             split_name: Name of the split
 
         Returns:
@@ -76,7 +192,7 @@ class CocoConverter(FormatConverter):
         """
         if not json_path.exists():
             logger.warning("COCO labels file missing: {}", json_path)
-            return DatasetSplit(name=split_name, images=[], annotations=[])
+            return Split(name=split_name, images=[], annotations=[])
 
         data = json.loads(json_path.read_text())
         categories = data.get("categories", [])
@@ -85,11 +201,11 @@ class CocoConverter(FormatConverter):
             name = category.get("name")
             if not name:
                 raise COCOCategoryMissingNameError
-            if name not in config.class_names:
+            if name not in class_names:
                 raise UnknownClassNameError(name)
-            category_map[int(category["id"])] = config.class_names.index(name)
+            category_map[int(category["id"])] = class_names.index(name)
 
-        images_dir = _resolve_split_dir(input_dir / config.images_dir, split_name)
+        images_dir = _resolve_split_dir(input_dir / images_dir_name, split_name)
         images: list[ImageInfo] = []
         for image in data.get("images", []):
             file_name = image["file_name"]
@@ -118,92 +234,111 @@ class CocoConverter(FormatConverter):
                 ),
             )
 
-        return DatasetSplit(name=split_name, images=images, annotations=annotations)
+        return Split(name=split_name, images=images, annotations=annotations)
 
     def read(
         self,
-        input_path: Path | list[Path],
-        config: ConversionConfig,
-        **options: Any,
-    ) -> list[DatasetSplit]:
+        params: CocoDetectedParams,  # type: ignore[override]
+    ) -> Dataset:
         """Read a COCO format dataset from disk.
 
         Args:
-            input_path: Path to dataset directory or list of JSON file paths
-            config: Conversion configuration
-            **options: Additional options:
-                - split_files: dict[str, Path] for explicit file mapping
-                - split_names: list[str] for split names when using list[Path]
+            params: CocoDetectedParams with all necessary information
 
         Returns:
-            List of dataset splits
+            Dataset containing all splits
 
         """
-        splits: list[DatasetSplit] = []
+        if not params.class_names:
+            msg = "Class names are required for COCO format"
+            raise ValueError(msg)
 
-        # Handle list of paths (explicit JSON files)
-        if isinstance(input_path, list):
-            split_names = options.get("split_names", [])
-            if not split_names:
-                # Generate split names from file names
-                split_names = [Path(p).stem for p in input_path]
-
-            if len(split_names) != len(input_path):
-                raise SplitNamesMismatchError
-
-            # Determine base directory (parent of first file)
-            base_dir = input_path[0].parent if input_path else Path.cwd()
-
-            for json_path, split_name in zip(input_path, split_names, strict=True):
-                split_data = self._read_split_from_json(Path(json_path), base_dir, config, split_name)
-                splits.append(split_data)
-
-            return splits
+        class_names = params.class_names
+        images_dir_name = params.images_dir or "images"
+        splits_dict: dict[str, Split] = {}
 
         # Handle split_files option
-        if options.get("split_files"):
-            split_files: dict[str, Path] = options["split_files"]
-            input_dir = Path(input_path)
-            for split_name, json_path in split_files.items():
-                split = self._read_split_from_json(Path(json_path), input_dir, config, split_name)
-                splits.append(split)
-            return splits
+        if params.split_files:
+            if isinstance(params.input_path, list):
+                base_dir = params.input_path[0].parent if params.input_path else Path.cwd()
+            else:
+                base_dir = Path(params.input_path)
 
-        # Standard directory-based approach
-        input_dir = Path(input_path)
-        for split_name in config.split_names:
-            labels_path = input_dir / config.annotations_dir / f"{split_name}.json"
-            split_data = self._read_split_from_json(labels_path, input_dir, config, split_name)
-            splits.append(split_data)
+            for split_name, json_path in params.split_files.items():
+                split = self._read_split_from_json(
+                    json_path,
+                    base_dir,
+                    class_names,
+                    images_dir_name,
+                    split_name,
+                )
+                splits_dict[split_name] = split
+        elif isinstance(params.input_path, list):
+            # List of JSON files
+            base_dir = params.input_path[0].parent if params.input_path else Path.cwd()
+            split_names = params.splits or [Path(p).stem for p in params.input_path]
 
-        return splits
+            if len(split_names) != len(params.input_path):
+                raise SplitNamesMismatchError
+
+            for json_path, split_name in zip(params.input_path, split_names, strict=True):
+                split = self._read_split_from_json(
+                    Path(json_path),
+                    base_dir,
+                    class_names,
+                    images_dir_name,
+                    split_name,
+                )
+                splits_dict[split_name] = split
+        else:
+            # Standard directory-based approach
+            input_dir = Path(params.input_path)
+            annotations_dir = params.annotations_dir or "annotations"
+            splits = params.splits or ["data"]
+
+            for split_name in splits:
+                labels_path = input_dir / annotations_dir / f"{split_name}.json"
+                split = self._read_split_from_json(
+                    labels_path,
+                    input_dir,
+                    class_names,
+                    images_dir_name,
+                    split_name,
+                )
+                splits_dict[split_name] = split
+
+        return Dataset(splits=splits_dict, class_names=class_names)
 
     def write(
         self,
         output_dir: Path,
-        config: ConversionConfig,
-        splits: list[DatasetSplit],
-        **_options: Any,
+        dataset: Dataset,
+        params: CocoWriteDetectedParams,  # type: ignore[override]
     ) -> None:
         """Write a dataset in COCO format to disk.
 
         Args:
             output_dir: Output directory path
-            config: Conversion configuration
-            splits: List of dataset splits to write
-            **options: Additional options (unused)
+            dataset: Dataset containing all splits
+            params: CocoWriteDetectedParams with write configuration
 
         """
         output_dir.mkdir(parents=True, exist_ok=True)
-        annotations_dir = output_dir / config.annotations_dir
+        annotations_dir = output_dir / params.annotations_dir
         annotations_dir.mkdir(parents=True, exist_ok=True)
 
         categories = [
-            {"id": idx + 1, "name": name, "supercategory": "object"} for idx, name in enumerate(config.class_names)
+            {"id": idx + 1, "name": name, "supercategory": "object"} for idx, name in enumerate(params.class_names)
         ]
 
-        for split in splits:
-            images_dir = output_dir / config.images_dir
+        splits_to_write = params.splits or list(dataset.splits.keys())
+        for split_name in splits_to_write:
+            if split_name not in dataset.splits:
+                logger.warning("Split '{}' not found in dataset, skipping", split_name)
+                continue
+
+            split = dataset.splits[split_name]
+            images_dir = output_dir / params.images_dir
             if split.name != "data":
                 images_dir = images_dir / split.name
             images_dir.mkdir(parents=True, exist_ok=True)
