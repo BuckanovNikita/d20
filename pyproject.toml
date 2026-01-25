@@ -76,11 +76,15 @@ select = [
     "RSE",  # flake8-raise
     "ASYNC", # flake8-async
     "TID",  # flake8-tidy-imports
-    "Q",    # flake8-quotes
+    "Q",    # flake8-quotes,
+    "D",
+    "FLY"
 ]
 ignore = [
     "PLR2004", # magic value used in comparison
-    "COM812"
+    "COM812",
+    "D213",
+    "D203",
 ]
 
 [tool.ruff.format]
@@ -116,15 +120,12 @@ pretty = true
 disallow_any_generics = true
 disallow_subclassing_any = true
 disallow_untyped_calls = true
-disallow_untyped_expr = true
 disallow_any_unimported = true
 disallow_any_expr = false  # Too strict for practical use
 disallow_any_decorated = false  # Too strict for practical use
-warn_unused_coroutines = true
 warn_incomplete_stub = true
-warn_redundant_expr = true
 strict_optional = true
-strict = false  # Don't enable all strict flags, but enable most important ones
+strict = true  # Don't enable all strict flags, but enable most important ones
 
 [[tool.mypy.overrides]]
 module = [

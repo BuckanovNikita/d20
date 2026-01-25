@@ -1,14 +1,30 @@
+"""YOLO format dataset reading and writing."""
+
 from __future__ import annotations
 
-from collections.abc import Iterable
 from pathlib import Path
 from shutil import copy2
+from typing import TYPE_CHECKING
 
+import yaml
 from loguru import logger
-
-from d20.config import ConversionConfig
-from d20.types import Annotation, DatasetSplit, ImageInfo
 from pillow import Image
+
+from d20.types import Annotation, DatasetSplit, ImageInfo
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from d20.config import ConversionConfig
+
+
+class UnknownClassIdError(ValueError):
+    """Raised when an unknown class id is encountered."""
+
+    def __init__(self, class_id: int) -> None:
+        """Initialize error with class id."""
+        super().__init__(f"Unknown class id: {class_id}")
+        self.class_id = class_id
 
 IMAGE_EXTS = {
     ".avif",
@@ -50,6 +66,7 @@ def _read_image_info(image_path: Path, images_dir: Path) -> ImageInfo:
 
 
 def read_yolo_dataset(input_dir: Path, config: ConversionConfig) -> list[DatasetSplit]:
+    """Read a YOLO format dataset from disk."""
     splits: list[DatasetSplit] = []
     for split in config.split_names:
         images_dir = _resolve_split_dir(input_dir / config.images_dir, split)
@@ -79,7 +96,7 @@ def read_yolo_dataset(input_dir: Path, config: ConversionConfig) -> list[Dataset
 
                 class_id = int(parts[0])
                 if class_id >= len(config.class_names):
-                    raise ValueError(f"Unknown class id: {class_id}")
+                    raise UnknownClassIdError(class_id)
 
                 x_center = float(parts[1])
                 y_center = float(parts[2])
@@ -96,7 +113,7 @@ def read_yolo_dataset(input_dir: Path, config: ConversionConfig) -> list[Dataset
                         image_id=image.image_id,
                         category_id=class_id,
                         bbox=(bbox_x, bbox_y, bbox_w, bbox_h),
-                    )
+                    ),
                 )
 
         splits.append(DatasetSplit(name=split, images=images, annotations=annotations))
@@ -129,6 +146,7 @@ def _group_annotations(annotations: Iterable[Annotation]) -> dict[str, list[Anno
 
 
 def write_yolo_dataset(output_dir: Path, config: ConversionConfig, splits: list[DatasetSplit]) -> None:
+    """Write a dataset in YOLO format to disk."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for split in splits:
@@ -164,6 +182,5 @@ def write_yolo_dataset(output_dir: Path, config: ConversionConfig, splits: list[
 
 
 def yaml_safe_dump(data: dict) -> str:
-    import yaml
-
+    """Safely dump data to YAML string."""
     return yaml.safe_dump(data, sort_keys=False)

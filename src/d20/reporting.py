@@ -1,12 +1,34 @@
+"""FiftyOne report generation functionality."""
+
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import fiftyone as fo
 from loguru import logger
 
-from d20.config import ConversionConfig
+if TYPE_CHECKING:
+    from d20.config import ConversionConfig
+
+
+class UnsupportedDatasetFormatError(ValueError):
+    """Raised when an unsupported dataset format is provided."""
+
+    def __init__(self, dataset_format: str) -> None:
+        """Initialize error with dataset format."""
+        super().__init__(f"Unsupported dataset format: {dataset_format}")
+        self.dataset_format = dataset_format
+
+
+@dataclass
+class ReportOptions:
+    """Options for generating FiftyOne reports."""
+
+    split: str | None = None
+    max_samples: int = 10
 
 
 def generate_fiftyone_report(
@@ -14,22 +36,25 @@ def generate_fiftyone_report(
     output_dir: Path,
     config: ConversionConfig,
     report_dir: Path,
-    split: str | None = None,
-    max_samples: int = 10,
+    options: ReportOptions | None = None,
 ) -> Path:
+    """Generate a FiftyOne HTML report for a dataset."""
+    if options is None:
+        options = ReportOptions()
+
     dataset_format = dataset_format.lower()
     output_dir = Path(output_dir)
     report_dir = Path(report_dir)
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    split_name = split or (config.split_names[0] if config.split_names else "data")
+    split_name = options.split or (config.split_names[0] if config.split_names else "data")
     dataset_name = f"d20-{dataset_format}-{split_name}-{uuid4().hex}"
 
     dataset = _load_dataset(dataset_format, output_dir, config, split_name, dataset_name)
     try:
         drawn_dir = report_dir / "drawn"
         drawn_dir.mkdir(parents=True, exist_ok=True)
-        view = dataset.limit(max_samples)
+        view = dataset.limit(options.max_samples)
         drawn_paths = view.draw_labels(output_dir=str(drawn_dir), overwrite=True)
         html_path = report_dir / "index.html"
         html_path.write_text(_build_html(drawn_paths, report_dir))
@@ -75,7 +100,7 @@ def _load_dataset(
             overwrite=True,
         )
 
-    raise ValueError(f"Unsupported dataset format: {dataset_format}")
+    raise UnsupportedDatasetFormatError(dataset_format)
 
 
 def _resolve_split_dir(base_dir: Path, split: str) -> Path:
@@ -92,16 +117,7 @@ def _build_html(drawn_paths: list[str], report_dir: Path) -> str:
             src = rel.as_posix()
         except ValueError:
             src = resolved.as_posix()
-        items.append(f"<div><img src=\"{src}\" /></div>")
+        items.append(f'<div><img src="{src}" /></div>')
 
     body = "\n".join(items)
-    return "\n".join(
-        [
-            "<html>",
-            "<head><meta charset=\"utf-8\"></head>",
-            "<body>",
-            body,
-            "</body>",
-            "</html>",
-        ]
-    )
+    return f'<html>\n<head><meta charset="utf-8"></head>\n<body>\n{body}\n</body>\n</html>'

@@ -10,7 +10,7 @@ from tests.utils.downloader import DownloadConfig, download_datasets
 
 
 def main() -> None:
-    """Main function."""
+    """Download datasets for testing."""
     logger.info("Starting d20 dataset downloader")
 
     config = DownloadConfig(

@@ -1,13 +1,35 @@
+"""COCO format dataset reading and writing."""
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
 from shutil import copy2
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from d20.config import ConversionConfig
 from d20.types import Annotation, DatasetSplit, ImageInfo
+
+if TYPE_CHECKING:
+    from d20.config import ConversionConfig
+
+
+class COCOCategoryMissingNameError(ValueError):
+    """Raised when a COCO category is missing a name."""
+
+    def __init__(self) -> None:
+        """Initialize error."""
+        super().__init__("COCO category missing name")
+
+
+class UnknownClassNameError(ValueError):
+    """Raised when an unknown class name is encountered."""
+
+    def __init__(self, name: str) -> None:
+        """Initialize error with class name."""
+        super().__init__(f"Unknown class name: {name}")
+        self.name = name
 
 
 def _resolve_split_dir(base_dir: Path, split: str) -> Path:
@@ -16,6 +38,7 @@ def _resolve_split_dir(base_dir: Path, split: str) -> Path:
 
 
 def read_coco_dataset(input_dir: Path, config: ConversionConfig) -> list[DatasetSplit]:
+    """Read a COCO format dataset from disk."""
     splits: list[DatasetSplit] = []
     for split in config.split_names:
         labels_path = input_dir / config.annotations_dir / f"{split}.json"
@@ -30,9 +53,9 @@ def read_coco_dataset(input_dir: Path, config: ConversionConfig) -> list[Dataset
         for category in categories:
             name = category.get("name")
             if not name:
-                raise ValueError("COCO category missing name")
+                raise COCOCategoryMissingNameError
             if name not in config.class_names:
-                raise ValueError(f"Unknown class name: {name}")
+                raise UnknownClassNameError(name)
             category_map[int(category["id"])] = config.class_names.index(name)
 
         images_dir = _resolve_split_dir(input_dir / config.images_dir, split)
@@ -49,7 +72,7 @@ def read_coco_dataset(input_dir: Path, config: ConversionConfig) -> list[Dataset
                     width=int(image["width"]),
                     height=int(image["height"]),
                     path=image_path,
-                )
+                ),
             )
 
         annotations: list[Annotation] = []
@@ -61,7 +84,7 @@ def read_coco_dataset(input_dir: Path, config: ConversionConfig) -> list[Dataset
                     image_id=str(annotation["image_id"]),
                     category_id=category_id,
                     bbox=(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
-                )
+                ),
             )
 
         splits.append(DatasetSplit(name=split, images=images, annotations=annotations))
@@ -70,6 +93,7 @@ def read_coco_dataset(input_dir: Path, config: ConversionConfig) -> list[Dataset
 
 
 def write_coco_dataset(output_dir: Path, config: ConversionConfig, splits: list[DatasetSplit]) -> None:
+    """Write a dataset in COCO format to disk."""
     output_dir.mkdir(parents=True, exist_ok=True)
     annotations_dir = output_dir / config.annotations_dir
     annotations_dir.mkdir(parents=True, exist_ok=True)
@@ -99,7 +123,7 @@ def write_coco_dataset(output_dir: Path, config: ConversionConfig, splits: list[
                     "file_name": image.file_name,
                     "width": image.width,
                     "height": image.height,
-                }
+                },
             )
 
         coco_annotations: list[dict] = []
@@ -113,7 +137,7 @@ def write_coco_dataset(output_dir: Path, config: ConversionConfig, splits: list[
                     "bbox": list(annotation.bbox),
                     "area": float(annotation.bbox[2] * annotation.bbox[3]),
                     "iscrowd": 0,
-                }
+                },
             )
             annotation_id += 1
 

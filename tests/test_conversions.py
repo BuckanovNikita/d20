@@ -1,3 +1,5 @@
+"""Tests for dataset format conversions."""
+
 from __future__ import annotations
 
 import json
@@ -10,7 +12,7 @@ from defusedxml import ElementTree
 
 from d20.config import load_config
 from d20.convert import convert_dataset
-from d20.reporting import generate_fiftyone_report
+from d20.reporting import ReportOptions, generate_fiftyone_report
 
 IMAGE_EXTS = {
     ".avif",
@@ -36,6 +38,8 @@ DATASET_YAMLS = (
 
 @dataclass(frozen=True)
 class YoloFixture:
+    """Fixture data for YOLO dataset tests."""
+
     name: str
     root: Path
     yaml_path: Path
@@ -158,6 +162,7 @@ def _write_config(
 
 @pytest.mark.parametrize("yaml_path", DATASET_YAMLS)
 def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:  # noqa: PLR0915
+    """Test roundtrip conversion: YOLO -> COCO -> VOC -> YOLO."""
     fixture = _resolve_yolo_fixture(yaml_path)
     fixture_root = fixture.root
     data = fixture.data
@@ -194,7 +199,7 @@ def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:  # no
         output_dir=coco_dir,
         config=config,
         report_dir=coco_report_dir,
-        split=config.splits[0],
+        options=ReportOptions(split=config.splits[0]),
     )
     assert coco_report_path.exists()
 
@@ -242,6 +247,6 @@ def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:  # no
         output_dir=yolo_dir,
         config=config,
         report_dir=yolo_report_dir,
-        split=config.splits[0],
+        options=ReportOptions(split=config.splits[0]),
     )
     assert yolo_report_path.exists()

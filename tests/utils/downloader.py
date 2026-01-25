@@ -1,5 +1,7 @@
 """Tool for downloading COCO datasets from Ultralytics."""
 
+import shutil
+import zipfile
 from pathlib import Path
 
 import requests
@@ -27,6 +29,7 @@ def download_file(url: str, output_path: Path) -> None:
     Args:
         url: URL to download from
         output_path: Path where file will be saved
+
     """
     logger.info(f"Downloading {url} to {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,6 +52,63 @@ def download_file(url: str, output_path: Path) -> None:
     logger.info(f"Downloaded {output_path} ({downloaded / 1024 / 1024:.2f} MB)")
 
 
+def _get_root_dirs(namelist: list[str]) -> set[str]:
+    """Extract root directory names from zip file namelist."""
+    root_dirs = {name.split("/")[0] for name in namelist if "/" in name}
+    root_dirs.update({name.split("\\")[0] for name in namelist if "\\" in name})
+    return {d for d in root_dirs if d}  # Remove empty strings
+
+
+def _move_yaml_files(nested_dir: Path, extract_to: Path) -> None:
+    """Move YAML files from nested directory to extract_to."""
+    for yaml_file in nested_dir.glob("*.yaml"):
+        yaml_dest = extract_to / yaml_file.name
+        if yaml_dest.exists():
+            yaml_dest.unlink()
+        yaml_file.rename(yaml_dest)
+        logger.info(f"Moved {yaml_file.name} to {extract_to}")
+
+
+def _move_other_contents(nested_dir: Path, dataset_dir: Path) -> None:
+    """Move all non-YAML contents from nested directory to dataset directory."""
+    if dataset_dir.exists():
+        shutil.rmtree(dataset_dir)
+    dataset_dir.mkdir(exist_ok=True)
+
+    for item in nested_dir.iterdir():
+        if item.is_file() and item.suffix == ".yaml":
+            continue  # Already moved
+        dest = dataset_dir / item.name
+        if item.is_dir():
+            shutil.move(str(item), str(dest))
+        else:
+            item.rename(dest)
+
+
+def _extract_nested_structure(
+    zip_ref: zipfile.ZipFile,
+    extract_to: Path,
+    root_dirs: set[str],
+    dataset_name_clean: str,
+) -> None:
+    """Extract zip with nested structure handling."""
+    logger.info("Detected nested structure, extracting contents one level up")
+    temp_extract = extract_to / "_temp_extract"
+    if temp_extract.exists():
+        shutil.rmtree(temp_extract)
+    temp_extract.mkdir(parents=True, exist_ok=True)
+    zip_ref.extractall(temp_extract)
+
+    nested_dir = temp_extract / next(iter(root_dirs))
+    if nested_dir.exists():
+        _move_yaml_files(nested_dir, extract_to)
+        dataset_dir = extract_to / dataset_name_clean
+        _move_other_contents(nested_dir, dataset_dir)
+
+    if temp_extract.exists():
+        shutil.rmtree(temp_extract)
+
+
 def extract_zip(zip_path: Path, extract_to: Path, dataset_name: str) -> None:
     """Extract a zip file to a directory, handling nested structure.
 
@@ -56,68 +116,23 @@ def extract_zip(zip_path: Path, extract_to: Path, dataset_name: str) -> None:
         zip_path: Path to zip file
         extract_to: Directory to extract to (output_dir)
         dataset_name: Name of the dataset (to detect nested structure)
-    """
-    import shutil
-    import zipfile
 
+    """
     logger.info(f"Extracting {zip_path} to {extract_to}")
     extract_to.mkdir(parents=True, exist_ok=True)
 
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        # Check if zip has a single root directory matching dataset name
         namelist = zip_ref.namelist()
         if not namelist:
             logger.warning(f"Zip file {zip_path} is empty")
             return
 
-        # Get root directory name (first path component)
-        root_dirs = {name.split("/")[0] for name in namelist if "/" in name}
-        root_dirs.update({name.split("\\")[0] for name in namelist if "\\" in name})
-        root_dirs = {d for d in root_dirs if d}  # Remove empty strings
-
+        root_dirs = _get_root_dirs(namelist)
         dataset_name_clean = dataset_name.lower().replace("_", "-")
 
-        # If zip has single root directory matching dataset name, extract one level up
         if len(root_dirs) == 1 and dataset_name_clean in root_dirs:
-            logger.info("Detected nested structure, extracting contents one level up")
-            # Extract to temp location first
-            temp_extract = extract_to / "_temp_extract"
-            if temp_extract.exists():
-                shutil.rmtree(temp_extract)
-            temp_extract.mkdir(parents=True, exist_ok=True)
-            zip_ref.extractall(temp_extract)
-
-            # Move contents from nested directory
-            nested_dir = temp_extract / list(root_dirs)[0]
-            if nested_dir.exists():
-                # Move yaml files to extract_to (output_dir root)
-                for yaml_file in nested_dir.glob("*.yaml"):
-                    yaml_dest = extract_to / yaml_file.name
-                    if yaml_dest.exists():
-                        yaml_dest.unlink()
-                    yaml_file.rename(yaml_dest)
-                    logger.info(f"Moved {yaml_file.name} to {extract_to}")
-
-                # Move all other contents to dataset directory
-                dataset_dir = extract_to / dataset_name_clean
-                if dataset_dir.exists():
-                    shutil.rmtree(dataset_dir)
-                dataset_dir.mkdir(exist_ok=True)
-
-                for item in nested_dir.iterdir():
-                    if item.is_file() and item.suffix == ".yaml":
-                        continue  # Already moved
-                    dest = dataset_dir / item.name
-                    if item.is_dir():
-                        shutil.move(str(item), str(dest))
-                    else:
-                        item.rename(dest)
-
-            # Clean up temp directory
-            if temp_extract.exists():
-                shutil.rmtree(temp_extract)
+            _extract_nested_structure(zip_ref, extract_to, root_dirs, dataset_name_clean)
         else:
-            # Normal extraction
             zip_ref.extractall(extract_to)
 
     logger.info(f"Extracted to {extract_to}")
@@ -129,6 +144,7 @@ def download_dataset(dataset_name: str, config: DownloadConfig) -> None:
     Args:
         dataset_name: Name of the dataset (e.g., 'coco8', 'coco12-formats')
         config: Download configuration
+
     """
     dataset_name_clean = dataset_name.lower().replace("_", "-")
     url = f"{config.base_url}/{dataset_name_clean}.zip"
@@ -168,7 +184,7 @@ def download_dataset(dataset_name: str, config: DownloadConfig) -> None:
             )
             try:
                 download_file(yaml_url, yaml_path)
-            except Exception as e:
+            except (requests.HTTPError, requests.RequestException, OSError) as e:
                 logger.warning(f"Failed to download coco8.yaml: {e}")
 
 
@@ -177,6 +193,7 @@ def download_datasets(config: DownloadConfig | None = None) -> None:
 
     Args:
         config: Download configuration. If None, uses default config.
+
     """
     if config is None:
         config = DownloadConfig()
@@ -184,12 +201,12 @@ def download_datasets(config: DownloadConfig | None = None) -> None:
     logger.info(f"Starting download of datasets: {config.datasets}")
     logger.info(f"Output directory: {config.output_dir}")
 
-    for dataset in config.datasets:
-        try:
+    try:
+        for dataset in config.datasets:
             download_dataset(dataset, config)
-        except Exception as e:
-            logger.error(f"Error downloading {dataset}: {e}")
-            continue
+    except (requests.HTTPError, requests.RequestException, OSError, ValueError) as e:
+        logger.error(f"Error downloading datasets: {e}")
+        raise
 
     logger.info("Download completed")
 

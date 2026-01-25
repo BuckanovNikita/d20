@@ -1,3 +1,5 @@
+"""Command-line interface for d20 dataset conversion tool."""
+
 from __future__ import annotations
 
 import argparse
@@ -44,6 +46,7 @@ def _apply_overrides(config: ConversionConfig, args: argparse.Namespace) -> Conv
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Run the d20 CLI."""
     parser = _build_parser()
     args = parser.parse_args(argv)
 

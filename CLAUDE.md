@@ -12,6 +12,7 @@
 1. Use pydantic schemas for all configs
 1. not check output logs in cli tests
 1. Wirte README.md as user friendly intro, not as wall of documentation
+1. Try avoid using strings instead ofg types if it's not strictly neccessary. Do it for bypassing ruff checks it's not strictly necessary use other.
 
 ### Package Management
 

@@ -1,14 +1,30 @@
+"""VOC format dataset reading and writing."""
+
 from __future__ import annotations
 
 from pathlib import Path
 from shutil import copy2
+from typing import TYPE_CHECKING
 
-from defusedxml import ElementTree as ET
+from defusedxml import ElementTree
 from loguru import logger
-
-from d20.config import ConversionConfig
-from d20.types import Annotation, DatasetSplit, ImageInfo
 from pillow import Image
+
+from d20.types import Annotation, DatasetSplit, ImageInfo
+
+if TYPE_CHECKING:
+    from d20.config import ConversionConfig
+
+ET = ElementTree
+
+
+class UnknownClassNameError(ValueError):
+    """Raised when an unknown class name is encountered."""
+
+    def __init__(self, name: str) -> None:
+        """Initialize error with class name."""
+        super().__init__(f"Unknown class name: {name}")
+        self.name = name
 
 
 def _read_split_ids(image_sets_dir: Path, split: str) -> list[str]:
@@ -33,6 +49,7 @@ def _read_image_size(image_path: Path) -> tuple[int, int]:
 
 
 def read_voc_dataset(input_dir: Path, config: ConversionConfig) -> list[DatasetSplit]:
+    """Read a VOC format dataset from disk."""
     voc_images_dir = input_dir / "JPEGImages"
     voc_annotations_dir = input_dir / "Annotations"
     voc_image_sets_dir = input_dir / "ImageSets" / "Main"
@@ -68,7 +85,7 @@ def read_voc_dataset(input_dir: Path, config: ConversionConfig) -> list[DatasetS
                     width=width,
                     height=height,
                     path=image_path,
-                )
+                ),
             )
 
             for obj in root.findall("object"):
@@ -76,7 +93,7 @@ def read_voc_dataset(input_dir: Path, config: ConversionConfig) -> list[DatasetS
                 if not name:
                     continue
                 if name not in config.class_names:
-                    raise ValueError(f"Unknown class name: {name}")
+                    raise UnknownClassNameError(name)
 
                 bbox = obj.find("bndbox")
                 if bbox is None:
@@ -92,7 +109,7 @@ def read_voc_dataset(input_dir: Path, config: ConversionConfig) -> list[DatasetS
                         image_id=image_id,
                         category_id=config.class_names.index(name),
                         bbox=(xmin, ymin, xmax - xmin, ymax - ymin),
-                    )
+                    ),
                 )
 
         splits.append(DatasetSplit(name=split, images=images, annotations=annotations))
@@ -127,10 +144,10 @@ def _create_annotation_xml(
         bbox = ET.SubElement(obj, "bndbox")
 
         x, y, w, h = annotation.bbox
-        xmin = int(round(x)) + 1
-        ymin = int(round(y)) + 1
-        xmax = int(round(x + w))
-        ymax = int(round(y + h))
+        xmin = round(x) + 1
+        ymin = round(y) + 1
+        xmax = round(x + w)
+        ymax = round(y + h)
 
         ET.SubElement(bbox, "xmin").text = str(xmin)
         ET.SubElement(bbox, "ymin").text = str(ymin)
@@ -141,6 +158,7 @@ def _create_annotation_xml(
 
 
 def write_voc_dataset(output_dir: Path, config: ConversionConfig, splits: list[DatasetSplit]) -> None:
+    """Write a dataset in VOC format to disk."""
     voc_images_dir = output_dir / "JPEGImages"
     voc_annotations_dir = output_dir / "Annotations"
     voc_image_sets_dir = output_dir / "ImageSets" / "Main"
