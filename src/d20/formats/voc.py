@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from shutil import copy2
 from typing import TYPE_CHECKING
+from xml.etree.ElementTree import Element, ElementTree, SubElement
 
-from defusedxml import ElementTree
+from defusedxml.ElementTree import parse as defused_parse
 from loguru import logger
 from PIL import Image
 
@@ -16,8 +17,6 @@ if TYPE_CHECKING:
     from xml.etree.ElementTree import ElementTree as _ElementTree
 
     from d20.config import ConversionConfig
-
-ET = ElementTree
 
 
 class UnknownClassNameError(ValueError):
@@ -64,7 +63,7 @@ def read_voc_dataset(input_dir: Path, config: ConversionConfig) -> list[DatasetS
 
         for image_id in split_ids:
             xml_path = voc_annotations_dir / f"{image_id}.xml"
-            tree = ET.parse(xml_path)
+            tree = defused_parse(xml_path)
             root = tree.getroot()
             if root is None:
                 logger.warning("Empty XML root in VOC: {}", xml_path)
@@ -134,19 +133,19 @@ def _create_annotation_xml(
     annotations: list[Annotation],
     class_names: list[str],
 ) -> _ElementTree:
-    root = ET.Element("annotation")  # type: ignore[attr-defined]
-    ET.SubElement(root, "folder").text = "JPEGImages"  # type: ignore[attr-defined]
-    ET.SubElement(root, "filename").text = image.file_name  # type: ignore[attr-defined]
+    root = Element("annotation")
+    SubElement(root, "folder").text = "JPEGImages"
+    SubElement(root, "filename").text = image.file_name
 
-    size = ET.SubElement(root, "size")  # type: ignore[attr-defined]
-    ET.SubElement(size, "width").text = str(image.width)  # type: ignore[attr-defined]
-    ET.SubElement(size, "height").text = str(image.height)  # type: ignore[attr-defined]
-    ET.SubElement(size, "depth").text = "3"  # type: ignore[attr-defined]
+    size = SubElement(root, "size")
+    SubElement(size, "width").text = str(image.width)
+    SubElement(size, "height").text = str(image.height)
+    SubElement(size, "depth").text = "3"
 
     for annotation in annotations:
-        obj = ET.SubElement(root, "object")  # type: ignore[attr-defined]
-        ET.SubElement(obj, "name").text = class_names[annotation.category_id]  # type: ignore[attr-defined]
-        bbox = ET.SubElement(obj, "bndbox")  # type: ignore[attr-defined]
+        obj = SubElement(root, "object")
+        SubElement(obj, "name").text = class_names[annotation.category_id]
+        bbox = SubElement(obj, "bndbox")
 
         x, y, w, h = annotation.bbox
         xmin = round(x) + 1
@@ -154,12 +153,12 @@ def _create_annotation_xml(
         xmax = round(x + w)
         ymax = round(y + h)
 
-        ET.SubElement(bbox, "xmin").text = str(xmin)  # type: ignore[attr-defined]
-        ET.SubElement(bbox, "ymin").text = str(ymin)  # type: ignore[attr-defined]
-        ET.SubElement(bbox, "xmax").text = str(xmax)  # type: ignore[attr-defined]
-        ET.SubElement(bbox, "ymax").text = str(ymax)  # type: ignore[attr-defined]
+        SubElement(bbox, "xmin").text = str(xmin)
+        SubElement(bbox, "ymin").text = str(ymin)
+        SubElement(bbox, "xmax").text = str(xmax)
+        SubElement(bbox, "ymax").text = str(ymax)
 
-    return ET.ElementTree(root)  # type: ignore[attr-defined]
+    return ElementTree(root)
 
 
 def write_voc_dataset(output_dir: Path, config: ConversionConfig, splits: list[DatasetSplit]) -> None:
