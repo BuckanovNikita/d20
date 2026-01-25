@@ -89,9 +89,7 @@ def _split_path(root: Path, base_dir: str, split: str) -> Path:
 
 
 def _count_images(images_dir: Path) -> int:
-    return sum(
-        1 for path in images_dir.rglob("*") if path.is_file() and path.suffix.lower() in IMAGE_EXTS
-    )
+    return sum(1 for path in images_dir.rglob("*") if path.is_file() and path.suffix.lower() in IMAGE_EXTS)
 
 
 def _count_yolo_annotations(labels_dir: Path) -> int:

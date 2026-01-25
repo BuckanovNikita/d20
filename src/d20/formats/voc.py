@@ -5,10 +5,10 @@ from shutil import copy2
 
 from defusedxml import ElementTree as ET
 from loguru import logger
-from pillow import Image
 
 from d20.config import ConversionConfig
 from d20.types import Annotation, DatasetSplit, ImageInfo
+from pillow import Image
 
 
 def _read_split_ids(image_sets_dir: Path, split: str) -> list[str]:
@@ -140,9 +140,7 @@ def _create_annotation_xml(
     return ET.ElementTree(root)
 
 
-def write_voc_dataset(
-    output_dir: Path, config: ConversionConfig, splits: list[DatasetSplit]
-) -> None:
+def write_voc_dataset(output_dir: Path, config: ConversionConfig, splits: list[DatasetSplit]) -> None:
     voc_images_dir = output_dir / "JPEGImages"
     voc_annotations_dir = output_dir / "Annotations"
     voc_image_sets_dir = output_dir / "ImageSets" / "Main"

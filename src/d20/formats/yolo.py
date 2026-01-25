@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from shutil import copy2
-from typing import Iterable
 
 from loguru import logger
-from pillow import Image
 
 from d20.config import ConversionConfig
 from d20.types import Annotation, DatasetSplit, ImageInfo
+from pillow import Image
 
 IMAGE_EXTS = {
     ".avif",
@@ -27,13 +27,7 @@ IMAGE_EXTS = {
 
 
 def _iter_images(images_dir: Path) -> list[Path]:
-    return sorted(
-        [
-            path
-            for path in images_dir.rglob("*")
-            if path.is_file() and path.suffix.lower() in IMAGE_EXTS
-        ]
-    )
+    return sorted([path for path in images_dir.rglob("*") if path.is_file() and path.suffix.lower() in IMAGE_EXTS])
 
 
 def _resolve_split_dir(base_dir: Path, split: str) -> Path:
@@ -134,9 +128,7 @@ def _group_annotations(annotations: Iterable[Annotation]) -> dict[str, list[Anno
     return grouped
 
 
-def write_yolo_dataset(
-    output_dir: Path, config: ConversionConfig, splits: list[DatasetSplit]
-) -> None:
+def write_yolo_dataset(output_dir: Path, config: ConversionConfig, splits: list[DatasetSplit]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for split in splits:
@@ -165,10 +157,7 @@ def write_yolo_dataset(
                 y_center = (y + h / 2.0) / image.height
                 w_norm = w / image.width
                 h_norm = h / image.height
-                lines.append(
-                    f"{annotation.category_id} "
-                    f"{x_center:.6f} {y_center:.6f} {w_norm:.6f} {h_norm:.6f}"
-                )
+                lines.append(f"{annotation.category_id} {x_center:.6f} {y_center:.6f} {w_norm:.6f} {h_norm:.6f}")
             label_path.write_text("\n".join(lines))
 
     _write_data_yaml(output_dir, config)

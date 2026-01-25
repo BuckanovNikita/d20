@@ -11,6 +11,7 @@
 1. always write to README.md in russian
 1. Use pydantic schemas for all configs
 1. not check output logs in cli tests
+1. Wirte README.md as user friendly intro, not as wall of documentation
 
 ### Package Management
 

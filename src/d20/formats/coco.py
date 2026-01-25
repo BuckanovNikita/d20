@@ -69,16 +69,13 @@ def read_coco_dataset(input_dir: Path, config: ConversionConfig) -> list[Dataset
     return splits
 
 
-def write_coco_dataset(
-    output_dir: Path, config: ConversionConfig, splits: list[DatasetSplit]
-) -> None:
+def write_coco_dataset(output_dir: Path, config: ConversionConfig, splits: list[DatasetSplit]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     annotations_dir = output_dir / config.annotations_dir
     annotations_dir.mkdir(parents=True, exist_ok=True)
 
     categories = [
-        {"id": idx + 1, "name": name, "supercategory": "object"}
-        for idx, name in enumerate(config.class_names)
+        {"id": idx + 1, "name": name, "supercategory": "object"} for idx, name in enumerate(config.class_names)
     ]
 
     for split in splits:

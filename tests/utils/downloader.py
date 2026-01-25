@@ -79,7 +79,7 @@ def extract_zip(zip_path: Path, extract_to: Path, dataset_name: str) -> None:
 
         # If zip has single root directory matching dataset name, extract one level up
         if len(root_dirs) == 1 and dataset_name_clean in root_dirs:
-            logger.info(f"Detected nested structure, extracting contents one level up")
+            logger.info("Detected nested structure, extracting contents one level up")
             # Extract to temp location first
             temp_extract = extract_to / "_temp_extract"
             if temp_extract.exists():
@@ -163,7 +163,9 @@ def download_dataset(dataset_name: str, config: DownloadConfig) -> None:
         yaml_path = config.output_dir / "coco8.yaml"
         if not yaml_path.exists():
             logger.info("Downloading coco8.yaml configuration file")
-            yaml_url = "https://raw.githubusercontent.com/ultralytics/ultralytics/main/ultralytics/cfg/datasets/coco8.yaml"
+            yaml_url = (
+                "https://raw.githubusercontent.com/ultralytics/ultralytics/main/ultralytics/cfg/datasets/coco8.yaml"
+            )
             try:
                 download_file(yaml_url, yaml_path)
             except Exception as e:

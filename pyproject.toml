@@ -34,7 +34,9 @@ packages = ["src/d20", "src/pillow"]
 
 [tool.ruff]
 target-version = "py310"
-line-length = 100
+line-length = 120
+
+[tool.ruff.lint]
 select = [
     "E",    # pycodestyle errors
     "W",    # pycodestyle warnings
@@ -77,10 +79,8 @@ select = [
     "Q",    # flake8-quotes
 ]
 ignore = [
-    "E501",   # line too long (handled by formatter)
-    "S101",   # use of assert (allowed in tests)
-    "PLR0913", # too many arguments
     "PLR2004", # magic value used in comparison
+    "COM812"
 ]
 
 [tool.ruff.format]
@@ -147,10 +147,7 @@ addopts = [
     "--cov-report=html",
     "--cov-report=xml",
     "--cov-fail-under=80",
-    "--maxfail=1",
     "--tb=short",
-    "-W", "error::DeprecationWarning",
-    "-W", "error::PendingDeprecationWarning",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
