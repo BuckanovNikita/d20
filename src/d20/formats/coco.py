@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from shutil import copy2
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -109,7 +109,7 @@ def write_coco_dataset(output_dir: Path, config: ConversionConfig, splits: list[
         images_dir.mkdir(parents=True, exist_ok=True)
 
         image_id_map: dict[str, int] = {}
-        coco_images: list[dict] = []
+        coco_images: list[dict[str, Any]] = []
         for idx, image in enumerate(split.images, start=1):
             image_id_map[image.image_id] = idx
             relative = Path(image.file_name)
@@ -126,7 +126,7 @@ def write_coco_dataset(output_dir: Path, config: ConversionConfig, splits: list[
                 },
             )
 
-        coco_annotations: list[dict] = []
+        coco_annotations: list[dict[str, Any]] = []
         annotation_id = 1
         for annotation in split.annotations:
             coco_annotations.append(

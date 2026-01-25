@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -43,7 +44,7 @@ class YoloFixture:
     name: str
     root: Path
     yaml_path: Path
-    data: dict
+    data: dict[str, Any]
 
 
 def _resolve_yolo_fixture(yaml_path: Path) -> YoloFixture:
@@ -64,7 +65,7 @@ def _resolve_yolo_fixture(yaml_path: Path) -> YoloFixture:
     return YoloFixture(name=root.name, root=root, yaml_path=yaml_path, data=data)
 
 
-def _load_class_names(data: dict) -> list[str]:
+def _load_class_names(data: dict[str, Any]) -> list[str]:
     names = data.get("names")
     assert names, "Missing 'names' in YOLO YAML"
 
@@ -72,8 +73,9 @@ def _load_class_names(data: dict) -> list[str]:
         return names
 
     if isinstance(names, dict):
+        assert all(isinstance(k, (str, int)) for k in names), "Invalid key types in names dict"
 
-        def _key_as_int(key: object) -> int:
+        def _key_as_int(key: str | int) -> int:
             return int(key)
 
         return [names[key] for key in sorted(names.keys(), key=_key_as_int)]

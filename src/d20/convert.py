@@ -32,6 +32,7 @@ class UnsupportedOutputFormatError(ValueError):
         super().__init__(f"Unsupported output format: {output_format}")
         self.output_format = output_format
 
+
 READERS = {
     "coco": read_coco_dataset,
     "voc": read_voc_dataset,

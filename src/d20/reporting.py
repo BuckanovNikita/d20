@@ -70,11 +70,11 @@ def _load_dataset(
     config: ConversionConfig,
     split: str,
     dataset_name: str,
-) -> fo.Dataset:
+) -> fo.Dataset:  # type:ignore[name-defined]
     if dataset_format == "coco":
         data_path = _resolve_split_dir(output_dir / config.images_dir, split)
         labels_path = output_dir / config.annotations_dir / f"{split}.json"
-        return fo.Dataset.from_dir(
+        return fo.Dataset.from_dir(  # type: ignore[attr-defined]
             dataset_type=fo.types.COCODetectionDataset,
             data_path=str(data_path),
             labels_path=str(labels_path),
@@ -83,7 +83,7 @@ def _load_dataset(
         )
 
     if dataset_format == "yolo":
-        return fo.Dataset.from_dir(
+        return fo.Dataset.from_dir(  # type:ignore[attr-defined]
             dataset_dir=str(output_dir),
             dataset_type=fo.types.YOLOv5Dataset,
             split=split,
@@ -92,7 +92,7 @@ def _load_dataset(
         )
 
     if dataset_format == "voc":
-        return fo.Dataset.from_dir(
+        return fo.Dataset.from_dir(  # type:ignore[attr-defined]
             dataset_dir=str(output_dir),
             dataset_type=fo.types.VOCDetectionDataset,
             split=split,

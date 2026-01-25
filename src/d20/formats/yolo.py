@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from shutil import copy2
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from loguru import logger
-from pillow import Image
+from PIL import Image
 
 from d20.types import Annotation, DatasetSplit, ImageInfo
 
@@ -25,6 +25,7 @@ class UnknownClassIdError(ValueError):
         """Initialize error with class id."""
         super().__init__(f"Unknown class id: {class_id}")
         self.class_id = class_id
+
 
 IMAGE_EXTS = {
     ".avif",
@@ -181,6 +182,6 @@ def write_yolo_dataset(output_dir: Path, config: ConversionConfig, splits: list[
     _write_data_yaml(output_dir, config)
 
 
-def yaml_safe_dump(data: dict) -> str:
+def yaml_safe_dump(data: dict[str, Any]) -> str:
     """Safely dump data to YAML string."""
     return yaml.safe_dump(data, sort_keys=False)
