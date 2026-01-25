@@ -1,13 +1,13 @@
 # d20
 
-Инструмент для загрузки датасетов COCO8 и COCO12-Formats из Ultralytics.
+CLI и библиотека для конвертации датасетов детекции между форматами COCO, YOLO и PASCAL VOC.
 
-## Описание
+## Возможности
 
-Этот инструмент позволяет автоматически загружать и распаковывать датасеты COCO из репозитория Ultralytics. Поддерживаются следующие датасеты:
-
-- **COCO8**: Компактный датасет для тестирования, состоящий из первых 8 изображений из COCO train 2017
-- **COCO12-Formats**: Датасет в различных форматах (если доступен)
+- Конвертация между `coco`, `yolo`, `voc` в обе стороны.
+- Сохранение сплитов `train/val/test` или работа с одним сплитом `data`.
+- Настраиваемые директории `images/labels/annotations`.
+- HTML-отчет по результатам конвертаций через FiftyOne.
 
 ## Установка
 
@@ -15,48 +15,114 @@
 uv sync
 ```
 
-## Использование
-
-### Базовое использование
+Для разработки и тестов:
 
 ```bash
-uv run python main.py
+uv sync --extra dev
 ```
 
-Это загрузит датасеты COCO8 и COCO12-Formats в директорию `datasets/`.
+## Конфигурация
 
-### Программное использование
+Конфиг задается YAML-файлом и валидируется через Pydantic.
 
-```python
-from pathlib import Path
-from d20.downloader import DownloadConfig, download_datasets
-
-config = DownloadConfig(
-    output_dir=Path("my_datasets"),
-    datasets=["coco8", "coco12-formats"],
-)
-
-download_datasets(config)
+```yaml
+class_names:
+  - person
+  - bicycle
+splits:
+  - train
+  - val
+images_dir: images
+labels_dir: labels
+annotations_dir: annotations
 ```
 
-## Структура проекта
+Поля:
+- `class_names` — список классов (обязателен для YOLO).
+- `splits` — список сплитов, по умолчанию `["data"]`.
+- `images_dir`, `labels_dir`, `annotations_dir` — имена каталогов внутри датасета.
+
+## Форматы датасетов
+
+### YOLO (Ultralytics-style)
 
 ```
-d20/
-├── d20/
-│   ├── __init__.py
-│   └── downloader.py  # Основной модуль загрузки
-├── main.py            # Точка входа
-├── pyproject.toml     # Конфигурация проекта
-└── README.md          # Этот файл
+dataset/
+  images/
+    train/
+    val/
+  labels/
+    train/
+    val/
 ```
 
-## Зависимости
+Если сплиты не используются, допускается структура без подпапок `train/val`.
 
-- `loguru` - для логирования
-- `pydantic` - для валидации конфигурации
-- `requests` - для загрузки файлов
+### COCO
 
-## Лицензия
+```
+dataset/
+  images/
+    train/
+    val/
+  annotations/
+    train.json
+    val.json
+```
 
-MIT
+### PASCAL VOC
+
+```
+dataset/
+  JPEGImages/
+  Annotations/
+  ImageSets/
+    Main/
+      train.txt
+      val.txt
+```
+
+## CLI
+
+Примеры:
+
+```bash
+d20 yolo coco --input path/to/yolo --output path/to/coco --config config.yaml
+d20 coco voc --input path/to/coco --output path/to/voc --config config.yaml
+d20 voc yolo --input path/to/voc --output path/to/yolo --config config.yaml
+```
+
+Переопределение настроек:
+
+```bash
+d20 yolo coco \
+  --input path/to/yolo \
+  --output path/to/coco \
+  --config config.yaml \
+  --splits train,val \
+  --images-dir images \
+  --labels-dir labels \
+  --annotations-dir annotations
+```
+
+## Тесты
+
+Фикстуры должны находиться в `tests/fixtures/datasets/`:
+
+```
+tests/fixtures/datasets/
+  coco8/
+  coco8.yaml
+  coco12-formats/
+  coco12-formats.yaml
+```
+
+Если фикстуры отсутствуют, тесты должны падать.
+
+Запуск тестов:
+
+```bash
+uv run --extra dev pytest tests/
+```
+
+HTML-отчеты FiftyOne сохраняются в `tests/reports/<dataset>/<step>/index.html`.
