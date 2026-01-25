@@ -11,10 +11,23 @@ from d20.config import load_config
 from d20.convert import convert_dataset
 from d20.reporting import generate_fiftyone_report
 
-IMAGE_EXTS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
-FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+IMAGE_EXTS = {
+    ".avif",
+    ".bmp",
+    ".dng",
+    ".heic",
+    ".jpeg",
+    ".jpg",
+    ".jp2",
+    ".mpo",
+    ".png",
+    ".tif",
+    ".tiff",
+    ".webp",
+}
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "datasets"
 REPORTS_DIR = Path(__file__).resolve().parent / "reports"
-DATASET_NAMES = ("coco8", "coco12")
+DATASET_NAMES = ("coco8", "coco12-formats")
 
 
 def _require_fixture_dir(name: str) -> Path:
@@ -29,9 +42,13 @@ def _find_yaml(fixture_root: Path) -> Path:
     if preferred.exists():
         return preferred
 
-    candidates = sorted(fixture_root.glob("*.yaml"))
+    sibling = fixture_root.with_suffix(".yaml")
+    if sibling.exists():
+        return sibling
+
+    candidates = sorted(fixture_root.parent.glob("*.yaml"))
     if not candidates:
-        raise AssertionError(f"No YAML config found in {fixture_root}")
+        raise AssertionError(f"No YAML config found near {fixture_root}")
     return candidates[0]
 
 
@@ -44,6 +61,7 @@ def _load_class_names(data: dict) -> list[str]:
         return names
 
     if isinstance(names, dict):
+
         def _key_as_int(key: object) -> int:
             return int(key)
 
@@ -65,9 +83,7 @@ def _split_path(root: Path, base_dir: str, split: str) -> Path:
 
 def _count_images(images_dir: Path) -> int:
     return sum(
-        1
-        for path in images_dir.rglob("*")
-        if path.is_file() and path.suffix.lower() in IMAGE_EXTS
+        1 for path in images_dir.rglob("*") if path.is_file() and path.suffix.lower() in IMAGE_EXTS
     )
 
 
