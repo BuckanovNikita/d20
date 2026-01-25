@@ -92,13 +92,13 @@ def _build_html(drawn_paths: list[str], report_dir: Path) -> str:
             src = rel.as_posix()
         except ValueError:
             src = resolved.as_posix()
-        items.append(f'<div><img src="{src}" /></div>')
+        items.append(f"<div><img src=\"{src}\" /></div>")
 
     body = "\n".join(items)
     return "\n".join(
         [
             "<html>",
-            '<head><meta charset="utf-8"></head>',
+            "<head><meta charset=\"utf-8\"></head>",
             "<body>",
             body,
             "</body>",

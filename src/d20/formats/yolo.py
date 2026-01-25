@@ -116,7 +116,7 @@ def _write_data_yaml(output_dir: Path, config: ConversionConfig) -> None:
         else:
             data[split] = f"{config.images_dir}/{split}"
 
-    output_dir.joinpath("data.yaml").write_text(
+    (output_dir / "data.yaml").write_text(
         yaml_safe_dump(data),
     )
 
