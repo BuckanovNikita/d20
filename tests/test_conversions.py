@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
-from defusedxml import ElementTree as ET
 import pytest
 import yaml
+from defusedxml import ElementTree
 
 from d20.config import load_config
 from d20.convert import convert_dataset
@@ -27,35 +28,41 @@ IMAGE_EXTS = {
 }
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "datasets"
 REPORTS_DIR = Path(__file__).resolve().parent / "reports"
-DATASET_NAMES = ("coco8", "coco12-formats")
+DATASET_YAMLS = (
+    FIXTURES_DIR / "coco8.yaml",
+    FIXTURES_DIR / "coco12-formats.yaml",
+)
 
 
-def _require_fixture_dir(name: str) -> Path:
-    path = FIXTURES_DIR / name
-    if not path.exists():
-        raise AssertionError(f"Missing required fixture path: {path}")
-    return path
+@dataclass(frozen=True)
+class YoloFixture:
+    name: str
+    root: Path
+    yaml_path: Path
+    data: dict
 
 
-def _find_yaml(fixture_root: Path) -> Path:
-    preferred = fixture_root / "data.yaml"
-    if preferred.exists():
-        return preferred
+def _resolve_yolo_fixture(yaml_path: Path) -> YoloFixture:
+    assert yaml_path.exists(), f"Missing required fixture yaml: {yaml_path}"
 
-    sibling = fixture_root.with_suffix(".yaml")
-    if sibling.exists():
-        return sibling
+    data = yaml.safe_load(yaml_path.read_text()) or {}
 
-    candidates = sorted(fixture_root.parent.glob("*.yaml"))
-    if not candidates:
-        raise AssertionError(f"No YAML config found near {fixture_root}")
-    return candidates[0]
+    root_value = data.get("path")
+    if root_value:
+        root = Path(root_value)
+        if not root.is_absolute():
+            root = (yaml_path.parent / root).resolve()
+    else:
+        root = yaml_path.parent
+
+    assert root.exists(), f"Missing required fixture path: {root}"
+
+    return YoloFixture(name=root.name, root=root, yaml_path=yaml_path, data=data)
 
 
 def _load_class_names(data: dict) -> list[str]:
     names = data.get("names")
-    if not names:
-        raise AssertionError("Missing 'names' in YOLO YAML")
+    assert names, "Missing 'names' in YOLO YAML"
 
     if isinstance(names, list):
         return names
@@ -67,7 +74,7 @@ def _load_class_names(data: dict) -> list[str]:
 
         return [names[key] for key in sorted(names.keys(), key=_key_as_int)]
 
-    raise AssertionError("Unsupported 'names' structure in YOLO YAML")
+    pytest.fail("Unsupported 'names' structure in YOLO YAML")
 
 
 def _detect_splits(fixture_root: Path, images_dir: str) -> list[str]:
@@ -112,8 +119,7 @@ def _read_coco_category_count(labels_path: Path) -> int:
 
 def _read_voc_split_ids(image_sets_dir: Path, split: str) -> list[str]:
     split_path = image_sets_dir / f"{split}.txt"
-    if not split_path.exists():
-        raise AssertionError(f"Missing VOC split file: {split_path}")
+    assert split_path.exists(), f"Missing VOC split file: {split_path}"
 
     ids = []
     for line in split_path.read_text().splitlines():
@@ -128,7 +134,7 @@ def _count_voc_annotations(annotations_dir: Path, split_ids: list[str]) -> int:
     total = 0
     for image_id in split_ids:
         xml_path = annotations_dir / f"{image_id}.xml"
-        tree = ET.parse(xml_path)
+        tree = ElementTree.parse(xml_path)
         total += len(tree.findall(".//object"))
     return total
 
@@ -152,11 +158,12 @@ def _write_config(
     return config_path
 
 
-@pytest.mark.parametrize("dataset_name", DATASET_NAMES)
-def test_yolo_coco_voc_roundtrip(tmp_path: Path, dataset_name: str) -> None:
-    fixture_root = _require_fixture_dir(dataset_name)
-    data_yaml = _find_yaml(fixture_root)
-    data = yaml.safe_load(data_yaml.read_text())
+@pytest.mark.parametrize("yaml_path", DATASET_YAMLS)
+def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:  # noqa: PLR0915
+    fixture = _resolve_yolo_fixture(yaml_path)
+    fixture_root = fixture.root
+    data = fixture.data
+    dataset_name = fixture.name
 
     class_names = _load_class_names(data)
     images_dir = "images"
@@ -208,7 +215,7 @@ def test_yolo_coco_voc_roundtrip(tmp_path: Path, dataset_name: str) -> None:
         split_ids = _read_voc_split_ids(voc_image_sets_dir, split)
         expected_images = _count_images(_split_path(fixture_root, config.images_dir, split))
         expected_annotations = _count_yolo_annotations(
-            _split_path(fixture_root, config.labels_dir, split)
+            _split_path(fixture_root, config.labels_dir, split),
         )
 
         assert len(split_ids) == expected_images
