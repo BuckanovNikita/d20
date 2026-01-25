@@ -10,7 +10,20 @@ from pillow import Image
 from d20.config import ConversionConfig
 from d20.types import Annotation, DatasetSplit, ImageInfo
 
-IMAGE_EXTS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+IMAGE_EXTS = {
+    ".avif",
+    ".bmp",
+    ".dng",
+    ".heic",
+    ".jpeg",
+    ".jpg",
+    ".jp2",
+    ".mpo",
+    ".png",
+    ".tif",
+    ".tiff",
+    ".webp",
+}
 
 
 def _iter_images(images_dir: Path) -> list[Path]:

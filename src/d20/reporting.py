@@ -98,7 +98,7 @@ def _build_html(drawn_paths: list[str], report_dir: Path) -> str:
     return "\n".join(
         [
             "<html>",
-            "<head><meta charset=\"utf-8\"></head>",
+            '<head><meta charset="utf-8"></head>',
             "<body>",
             body,
             "</body>",
