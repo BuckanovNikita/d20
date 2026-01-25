@@ -161,7 +161,7 @@ def _write_config(
 
 
 @pytest.mark.parametrize("yaml_path", DATASET_YAMLS)
-def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:  # noqa: PLR0915
+def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:
     """Test roundtrip conversion: YOLO -> COCO -> VOC -> YOLO."""
     fixture = _resolve_yolo_fixture(yaml_path)
     fixture_root = fixture.root
@@ -229,3 +229,27 @@ def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:  # no
         assert yolo_labels_dir.exists()
         assert _count_images(yolo_images_dir) == expected_images
         assert _count_yolo_annotations(yolo_labels_dir) == expected_annotations
+
+
+@pytest.mark.parametrize("yaml_path", DATASET_YAMLS)
+def test_yolo_read_from_yaml(tmp_path: Path, yaml_path: Path) -> None:
+    """Test reading YOLO dataset directly from YAML file."""
+    fixture = _resolve_yolo_fixture(yaml_path)
+    data = fixture.data
+
+    class_names = _load_class_names(data)
+    images_dir = "images"
+    labels_dir = "labels"
+    splits = _detect_splits(fixture.root, images_dir)
+    config_path = _write_config(tmp_path, class_names, splits, images_dir, labels_dir)
+    config = load_config(config_path)
+
+    # Test reading from YAML file
+    coco_dir = tmp_path / "coco_from_yaml"
+    convert_dataset("yolo", "coco", yaml_path, coco_dir, config)
+
+    # Verify conversion worked
+    for split in splits:
+        coco_labels_path = coco_dir / config.annotations_dir / f"{split}.json"
+        assert coco_labels_path.exists()
+        assert _read_coco_image_count(coco_labels_path) > 0

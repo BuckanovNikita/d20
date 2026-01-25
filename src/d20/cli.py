@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> None:
     convert_dataset(
         input_format=args.source_format,
         output_format=args.target_format,
-        input_dir=Path(args.input),
+        input_path=Path(args.input),
         output_dir=Path(args.output),
         config=config,
     )
