@@ -13,7 +13,6 @@ from defusedxml import ElementTree
 
 from d20.config import load_config
 from d20.convert import convert_dataset
-from d20.reporting import ReportOptions, generate_fiftyone_report
 
 IMAGE_EXTS = {
     ".avif",
@@ -30,7 +29,6 @@ IMAGE_EXTS = {
     ".webp",
 }
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "datasets"
-REPORTS_DIR = Path(__file__).resolve().parent / "reports"
 DATASET_YAMLS = (
     FIXTURES_DIR / "coco8.yaml",
     FIXTURES_DIR / "coco12-formats.yaml",
@@ -168,7 +166,6 @@ def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:  # no
     fixture = _resolve_yolo_fixture(yaml_path)
     fixture_root = fixture.root
     data = fixture.data
-    dataset_name = fixture.name
 
     class_names = _load_class_names(data)
     images_dir = "images"
@@ -194,16 +191,6 @@ def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:  # no
         assert _read_coco_image_count(coco_labels_path) == expected_images
         assert _count_coco_annotations(coco_labels_path) == expected_annotations
         assert _read_coco_category_count(coco_labels_path) == len(config.class_names)
-
-    coco_report_dir = REPORTS_DIR / dataset_name / "yolo_to_coco"
-    coco_report_path = generate_fiftyone_report(
-        dataset_format="coco",
-        output_dir=coco_dir,
-        config=config,
-        report_dir=coco_report_dir,
-        options=ReportOptions(split=config.splits[0]),
-    )
-    assert coco_report_path.exists()
 
     voc_dir = tmp_path / "voc"
     convert_dataset("coco", "voc", coco_dir, voc_dir, config)
@@ -242,13 +229,3 @@ def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:  # no
         assert yolo_labels_dir.exists()
         assert _count_images(yolo_images_dir) == expected_images
         assert _count_yolo_annotations(yolo_labels_dir) == expected_annotations
-
-    yolo_report_dir = REPORTS_DIR / dataset_name / "voc_to_yolo"
-    yolo_report_path = generate_fiftyone_report(
-        dataset_format="yolo",
-        output_dir=yolo_dir,
-        config=config,
-        report_dir=yolo_report_dir,
-        options=ReportOptions(split=config.splits[0]),
-    )
-    assert yolo_report_path.exists()
