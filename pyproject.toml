@@ -5,14 +5,32 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "defusedxml",
+    "fiftyone",
     "loguru>=0.7.0",
+    "pillow",
     "pydantic>=2.0.0",
+    "pyyaml",
     "requests>=2.31.0",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[project.scripts]
+d20 = "d20.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "mypy",
+    "pytest",
+    "pytest-cov",
+    "ruff",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/d20", "src/pillow"]
 
 [tool.ruff]
 target-version = "py310"
@@ -115,6 +133,7 @@ disallow_untyped_defs = false
 
 [tool.pytest.ini_options]
 minversion = "8.0"
+pythonpath = ["src"]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
@@ -136,8 +155,4 @@ addopts = [
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
-]
-filterwarnings = [
-    "error",
-    "ignore::UserWarning",
 ]
