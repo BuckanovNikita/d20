@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from d20.types import Dataset, DetectedParams, WriteDetectedParams
@@ -161,7 +162,7 @@ class ConverterRegistry:
 _registry = ConverterRegistry()
 
 
-def register_converter(format_name: str) -> Any:
+def register_converter(format_name: str) -> Callable[[type[FormatConverter]], type[FormatConverter]]:
     """Register a format converter.
 
     Args:

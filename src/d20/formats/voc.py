@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from shutil import copy2
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from xml.etree.ElementTree import Element, ElementTree, SubElement
 
 from defusedxml.ElementTree import parse as defused_parse
@@ -244,7 +244,7 @@ class VocConverter(FormatConverter):
 
     def _parse_annotations_from_xml(
         self,
-        root: Any,
+        root: Element,
         image_id: str,
         class_names: list[str],
     ) -> list[Annotation]:

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from shutil import copy2
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import yaml
 from loguru import logger
 from PIL import Image
+from typing_extensions import Unpack
 
 from d20.formats.base import FormatConverter, register_converter
 from d20.types import (
@@ -22,6 +23,14 @@ from d20.types import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+else:
+    pass
+
+
+class _NormalizeOptions(TypedDict, total=False):
+    """Options for normalizing input path."""
+
+    yaml_path: Path | str
 
 
 class UnknownClassIdError(ValueError):
@@ -64,6 +73,44 @@ class UnsupportedYoloNamesStructureError(ValueError):
     def __init__(self) -> None:
         """Initialize error."""
         super().__init__("Unsupported 'names' structure in YOLO YAML")
+
+
+class InvalidYoloCoordinateError(ValueError):
+    """Raised when YOLO coordinates are out of valid range [0, 1]."""
+
+    def __init__(self, coord_name: str, value: float) -> None:
+        """Initialize error with coordinate name and value."""
+        super().__init__(f"Invalid YOLO coordinate {coord_name}: {value} (must be in [0, 1])")
+        self.coord_name = coord_name
+        self.value = value
+
+
+class InvalidYoloNumericValueError(ValueError):
+    """Raised when YOLO annotation contains invalid numeric value."""
+
+    def __init__(self, line: str, field: str, value: str, error: Exception) -> None:
+        """Initialize error with line, field, value and original error."""
+        super().__init__(f"Invalid numeric value in YOLO annotation line '{line}': field '{field}' = '{value}': {error}")
+        self.line = line
+        self.field = field
+        self.value = value
+        self.original_error = error
+
+
+class InvalidYoloBboxError(ValueError):
+    """Raised when calculated bounding box is invalid."""
+
+    def __init__(self, bbox: tuple[float, float, float, float], image_size: tuple[int, int]) -> None:
+        """Initialize error with bbox and image size."""
+        x, y, w, h = bbox
+        img_w, img_h = image_size
+        super().__init__(
+            f"Invalid bounding box ({x}, {y}, {w}, {h}) for image size ({img_w}, {img_h}): "
+            f"width={w} and height={h} must be positive, "
+            f"bbox must be within image bounds"
+        )
+        self.bbox = bbox
+        self.image_size = image_size
 
 
 IMAGE_EXTS = {
@@ -129,7 +176,7 @@ class YoloConverter(FormatConverter):
     def _normalize_input_path(
         self,
         input_path: Path | list[Path],
-        **options: Any,
+        **options: Unpack[_NormalizeOptions],
     ) -> tuple[Path, dict[str, Any]]:
         """Normalize input path and determine data type.
 
@@ -152,22 +199,23 @@ class YoloConverter(FormatConverter):
 
         # Check explicit yaml_path option
         if options.get("yaml_path"):
-            yaml_path = Path(options["yaml_path"])
+            yaml_path_value = options["yaml_path"]
+            yaml_path = yaml_path_value if isinstance(yaml_path_value, Path) else Path(yaml_path_value)
             if yaml_path.exists():
-                return yaml_path, options
+                return yaml_path, dict(options)
 
         # Auto-detect YAML file
         if path.suffix.lower() in (".yaml", ".yml") and path.exists():
-            return path, options
+            return path, dict(options)
 
         # Look for data.yaml in directory
         if path.is_dir():
             yaml_path = path / "data.yaml"
             if yaml_path.exists():
-                return yaml_path, options
+                return yaml_path, dict(options)
 
         # Return as-is (directory)
-        return path, options
+        return path, dict(options)
 
     def _read_from_yaml(self, yaml_path: Path) -> tuple[Path, dict[str, Any]]:
         """Read YOLO YAML configuration file.
