@@ -73,11 +73,11 @@ def _extract_categories_from_json_file(json_path: Path) -> tuple[set[str], dict[
                 if cat_id is not None and name not in category_map:
                     category_map[name] = int(cat_id)
     except json.JSONDecodeError as e:
-        logger.warning("Failed to parse JSON file {}: {}", json_path, e)
+        logger.warning(f"Failed to parse JSON file {json_path}: {e}")
     except OSError as e:
-        logger.warning("Failed to read JSON file {}: {}", json_path, e)
+        logger.warning(f"Failed to read JSON file {json_path}: {e}")
     except (KeyError, TypeError, ValueError) as e:
-        logger.warning("Unexpected structure in JSON file {}: {}", json_path, e)
+        logger.warning(f"Unexpected structure in JSON file {json_path}: {e}")
     return category_names, category_map
 
 
@@ -191,7 +191,7 @@ class CocoConverter(FormatConverter):
 
         """
         if not json_path.exists():
-            logger.warning("COCO labels file missing: {}", json_path)
+            logger.warning(f"COCO labels file missing: {json_path}")
             return Split(name=split_name, images=[], annotations=[])
 
         data = json.loads(json_path.read_text())
@@ -334,7 +334,7 @@ class CocoConverter(FormatConverter):
         splits_to_write = params.splits or list(dataset.splits.keys())
         for split_name in splits_to_write:
             if split_name not in dataset.splits:
-                logger.warning("Split '{}' not found in dataset, skipping", split_name)
+                logger.warning(f"Split '{split_name}' not found in dataset, skipping")
                 continue
 
             split = dataset.splits[split_name]

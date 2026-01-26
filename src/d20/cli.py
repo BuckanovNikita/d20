@@ -307,7 +307,7 @@ def _handle_convert_command(args: argparse.Namespace, parser: argparse.ArgumentP
     # Build write params
     write_params = _build_write_params(output_format, read_params, args)
 
-    logger.info("Converting from {} to {}", input_format, output_format)
+    logger.info(f"Converting from {input_format} to {output_format}")
 
     request = ConversionRequest(
         input_format=input_format,
@@ -352,7 +352,7 @@ def _handle_export_command(args: argparse.Namespace) -> None:
     # Build export options
     export_options = ExportOptions(split=getattr(args, "split", None))
 
-    logger.info("Exporting {} dataset to FiftyOne App", format_name)
+    logger.info(f"Exporting {format_name} dataset to FiftyOne App")
     export_fiftyone(read_params, export_options)
 
 

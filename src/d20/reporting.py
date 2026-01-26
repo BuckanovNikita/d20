@@ -57,26 +57,22 @@ def export_fiftyone(
     # Read dataset using DetectedParams
     dataset = converter.read(params)
 
-    logger.info("Read {} split(s) from dataset", len(dataset.splits))
+    logger.info(f"Read {len(dataset.splits)} split(s) from dataset")
     for split_name, split_data in dataset.splits.items():
         logger.info(
-            "Split '{}' has {} images and {} annotations",
-            split_name,
-            len(split_data.images),
-            len(split_data.annotations),
+            f"Split '{split_name}' has {len(split_data.images)} images and {len(split_data.annotations)} annotations"
         )
         if len(split_data.images) == 0:
             logger.warning(
-                "Split '{}' has no images. This usually means the annotation file "
-                "(JSON/YAML/XML) is empty or doesn't contain image entries.",
-                split_name,
+                f"Split '{split_name}' has no images. This usually means the annotation file "
+                "(JSON/YAML/XML) is empty or doesn't contain image entries."
             )
 
     # Filter splits if needed
     splits_to_export = dataset.splits
     if options.split:
         if options.split not in splits_to_export:
-            logger.warning("Split '{}' not found in dataset", options.split)
+            logger.warning(f"Split '{options.split}' not found in dataset")
             return
         splits_to_export = {options.split: dataset.splits[options.split]}
 
@@ -89,10 +85,10 @@ def export_fiftyone(
     created_datasets = []
     for split_name, dataset_split in splits_to_export.items():
         if not dataset_split.images:
-            logger.warning("Split '{}' has no images, skipping", split_name)
+            logger.warning(f"Split '{split_name}' has no images, skipping")
             continue
         dataset_name = f"d20-{format_name}-{split_name}-{uuid4().hex}"
-        logger.info("Exporting {} split '{}' to FiftyOne as '{}'", format_name, split_name, dataset_name)
+        logger.info(f"Exporting {format_name} split '{split_name}' to FiftyOne as '{dataset_name}'")
 
         # Create FiftyOne dataset from splits
         fo_dataset = _create_dataset_from_splits(format_name, dataset_split, class_names, dataset_name)
@@ -104,17 +100,16 @@ def export_fiftyone(
         if fo_dataset.name in fo.list_datasets():  # type: ignore[attr-defined]
             created_datasets.append(dataset_name)
             logger.info(
-                "Dataset '{}' created in FiftyOne with {} samples. Launch FiftyOne app to view: fiftyone app",
-                dataset_name,
-                len(dataset_split.images),
+                f"Dataset '{dataset_name}' created in FiftyOne with {len(dataset_split.images)} samples. "
+                "Launch FiftyOne app to view: fiftyone app"
             )
         else:
-            logger.error("Failed to create dataset '{}' in FiftyOne", dataset_name)
+            logger.error(f"Failed to create dataset '{dataset_name}' in FiftyOne")
 
     if created_datasets:
-        logger.info("Created {} dataset(s) in FiftyOne: {}", len(created_datasets), ", ".join(created_datasets))
+        logger.info(f"Created {len(created_datasets)} dataset(s) in FiftyOne: {', '.join(created_datasets)}")
         logger.info("To view datasets, run: fiftyone app")
-        logger.info("Or open a specific dataset: fiftyone app --dataset {}", created_datasets[0])
+        logger.info(f"Or open a specific dataset: fiftyone app --dataset {created_datasets[0]}")
 
 
 def _create_dataset_from_splits(
@@ -144,7 +139,7 @@ def _create_dataset_from_splits(
     for image_info in dataset_split.images:
         # Check if image file exists
         if not image_info.path.exists():
-            logger.warning("Image file not found: {}", image_info.path)
+            logger.warning(f"Image file not found: {image_info.path}")
             missing_images += 1
             continue
 
@@ -184,7 +179,7 @@ def _create_dataset_from_splits(
         fo_dataset.add_sample(sample)
         sample_count += 1
 
-    logger.info("Added {} samples to dataset '{}' ({} images were missing)", sample_count, dataset_name, missing_images)
+    logger.info(f"Added {sample_count} samples to dataset '{dataset_name}' ({missing_images} images were missing)")
     if sample_count == 0:
-        logger.error("No samples were added to dataset '{}'. Check image paths.", dataset_name)
+        logger.error(f"No samples were added to dataset '{dataset_name}'. Check image paths.")
     return fo_dataset

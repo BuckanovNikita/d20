@@ -234,6 +234,128 @@ class YoloConverter(FormatConverter):
         splits = [split_name for split_name in ("train", "val", "test") if data.get(split_name)]
         return splits if splits else ["data"]
 
+    def _determine_input_config(
+        self,
+        params: YoloDetectedParams,
+    ) -> tuple[Path, list[str], list[str]]:
+        """Determine input directory, class names, and splits from params.
+
+        Args:
+            params: YoloDetectedParams with all necessary information
+
+        Returns:
+            Tuple of (input_dir, class_names, splits)
+
+        """
+        if params.yaml_path and params.yaml_path.exists():
+            dataset_root, yaml_data = self._read_from_yaml(params.yaml_path)
+            class_names = self._load_class_names_from_yaml(yaml_data)
+            splits = self._detect_splits_from_yaml(yaml_data)
+            input_dir = dataset_root
+        elif params.dataset_root:
+            input_dir = params.dataset_root
+            class_names = params.class_names or []
+            splits = params.splits or ["data"]
+        else:
+            # Fallback to input_path
+            input_dir = Path(params.input_path[0]) if isinstance(params.input_path, list) else Path(params.input_path)
+            class_names = params.class_names or []
+            splits = params.splits or ["data"]
+
+        if not class_names:
+            raise MissingYoloNamesError
+
+        return input_dir, class_names, splits
+
+    def _parse_yolo_annotation_line(
+        self,
+        line: str,
+        image: ImageInfo,
+        class_names: list[str],
+    ) -> Annotation | None:
+        """Parse a single line from a YOLO label file.
+
+        Args:
+            line: Line from label file
+            image: ImageInfo for the image
+            class_names: List of class names
+
+        Returns:
+            Annotation object or None if line is invalid
+
+        """
+        stripped = line.strip()
+        if not stripped:
+            return None
+
+        parts = stripped.split()
+        if len(parts) != 5:
+            logger.warning(f"Skipping invalid YOLO label line: {line}")
+            return None
+
+        class_id = int(parts[0])
+        if class_id >= len(class_names):
+            raise UnknownClassIdError(class_id)
+
+        x_center = float(parts[1])
+        y_center = float(parts[2])
+        width = float(parts[3])
+        height = float(parts[4])
+
+        bbox_x = (x_center - width / 2.0) * image.width
+        bbox_y = (y_center - height / 2.0) * image.height
+        bbox_w = width * image.width
+        bbox_h = height * image.height
+
+        return Annotation(
+            image_id=image.image_id,
+            category_id=class_id,
+            bbox=(bbox_x, bbox_y, bbox_w, bbox_h),
+        )
+
+    def _read_split(
+        self,
+        split_name: str,
+        input_dir: Path,
+        images_dir_name: str,
+        labels_dir_name: str,
+        class_names: list[str],
+    ) -> Split:
+        """Read a single split from YOLO format.
+
+        Args:
+            split_name: Name of the split
+            input_dir: Root directory of the dataset
+            images_dir_name: Name of images directory
+            labels_dir_name: Name of labels directory
+            class_names: List of class names
+
+        Returns:
+            Split object with images and annotations
+
+        """
+        images_dir = _resolve_split_dir(input_dir / images_dir_name, split_name)
+        labels_dir = _resolve_split_dir(input_dir / labels_dir_name, split_name)
+
+        if not images_dir.exists():
+            logger.warning(f"YOLO images directory missing: {images_dir}")
+            return Split(name=split_name, images=[], annotations=[])
+
+        images = [_read_image_info(path, images_dir) for path in _iter_images(images_dir)]
+        annotations: list[Annotation] = []
+
+        for image in images:
+            label_path = labels_dir / Path(image.file_name).with_suffix(".txt")
+            if not label_path.exists():
+                continue
+
+            for line in label_path.read_text().splitlines():
+                annotation = self._parse_yolo_annotation_line(line, image, class_names)
+                if annotation:
+                    annotations.append(annotation)
+
+        return Split(name=split_name, images=images, annotations=annotations)
+
     def autodetect(
         self,
         input_path: Path | list[Path],
@@ -314,78 +436,20 @@ class YoloConverter(FormatConverter):
             Dataset containing all splits
 
         """
-        # Determine input directory and configuration
-        if params.yaml_path and params.yaml_path.exists():
-            dataset_root, yaml_data = self._read_from_yaml(params.yaml_path)
-            class_names = self._load_class_names_from_yaml(yaml_data)
-            splits = self._detect_splits_from_yaml(yaml_data)
-            input_dir = dataset_root
-        elif params.dataset_root:
-            input_dir = params.dataset_root
-            class_names = params.class_names or []
-            splits = params.splits or ["data"]
-        else:
-            # Fallback to input_path
-            input_dir = Path(params.input_path[0]) if isinstance(params.input_path, list) else Path(params.input_path)
-            class_names = params.class_names or []
-            splits = params.splits or ["data"]
-
-        if not class_names:
-            raise MissingYoloNamesError
+        input_dir, class_names, splits = self._determine_input_config(params)
 
         images_dir_name = params.images_dir or "images"
         labels_dir_name = params.labels_dir or "labels"
 
         splits_dict: dict[str, Split] = {}
         for split_name in splits:
-            images_dir = _resolve_split_dir(input_dir / images_dir_name, split_name)
-            labels_dir = _resolve_split_dir(input_dir / labels_dir_name, split_name)
-
-            if not images_dir.exists():
-                logger.warning("YOLO images directory missing: {}", images_dir)
-                splits_dict[split_name] = Split(name=split_name, images=[], annotations=[])
-                continue
-
-            images = [_read_image_info(path, images_dir) for path in _iter_images(images_dir)]
-            annotations: list[Annotation] = []
-
-            for image in images:
-                label_path = labels_dir / Path(image.file_name).with_suffix(".txt")
-                if not label_path.exists():
-                    continue
-
-                for line in label_path.read_text().splitlines():
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    parts = stripped.split()
-                    if len(parts) != 5:
-                        logger.warning("Skipping invalid YOLO label line: {}", line)
-                        continue
-
-                    class_id = int(parts[0])
-                    if class_id >= len(class_names):
-                        raise UnknownClassIdError(class_id)
-
-                    x_center = float(parts[1])
-                    y_center = float(parts[2])
-                    width = float(parts[3])
-                    height = float(parts[4])
-
-                    bbox_x = (x_center - width / 2.0) * image.width
-                    bbox_y = (y_center - height / 2.0) * image.height
-                    bbox_w = width * image.width
-                    bbox_h = height * image.height
-
-                    annotations.append(
-                        Annotation(
-                            image_id=image.image_id,
-                            category_id=class_id,
-                            bbox=(bbox_x, bbox_y, bbox_w, bbox_h),
-                        ),
-                    )
-
-            splits_dict[split_name] = Split(name=split_name, images=images, annotations=annotations)
+            splits_dict[split_name] = self._read_split(
+                split_name,
+                input_dir,
+                images_dir_name,
+                labels_dir_name,
+                class_names,
+            )
 
         return Dataset(splits=splits_dict, class_names=class_names)
 
@@ -408,7 +472,7 @@ class YoloConverter(FormatConverter):
         splits_to_write = params.splits or list(dataset.splits.keys())
         for split_name in splits_to_write:
             if split_name not in dataset.splits:
-                logger.warning("Split '{}' not found in dataset, skipping", split_name)
+                logger.warning(f"Split '{split_name}' not found in dataset, skipping")
                 continue
 
             split = dataset.splits[split_name]

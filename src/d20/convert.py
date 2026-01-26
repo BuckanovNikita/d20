@@ -21,10 +21,10 @@ class ConversionRequest:
 
     input_format: str
     output_format: str
-    input_path: "Path | list[Path]"  # noqa: UP037
-    output_dir: "Path"  # noqa: UP037
-    read_params: "DetectedParams"  # noqa: UP037
-    write_params: "WriteDetectedParams"  # noqa: UP037
+    input_path: Path | list[Path]
+    output_dir: Path
+    read_params: DetectedParams
+    write_params: WriteDetectedParams
 
 
 class UnsupportedInputFormatError(ValueError):
@@ -67,7 +67,7 @@ def _convert_dataset_impl(request: ConversionRequest) -> None:
     except FormatNotRegisteredError as e:
         raise UnsupportedOutputFormatError(request.output_format) from e
 
-    logger.info("Reading {} dataset from {}", request.input_format, request.input_path)
+    logger.info(f"Reading {request.input_format} dataset from {request.input_path}")
     dataset = reader.read(request.read_params)
-    logger.info("Writing {} dataset to {}", request.output_format, request.output_dir)
+    logger.info(f"Writing {request.output_format} dataset to {request.output_dir}")
     writer.write(request.output_dir, dataset, request.write_params)

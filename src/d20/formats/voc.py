@@ -45,7 +45,7 @@ class EmptyPathListError(ValueError):
 def _read_split_ids(image_sets_dir: Path, split: str) -> list[str]:
     split_path = image_sets_dir / f"{split}.txt"
     if not split_path.exists():
-        logger.warning("VOC split file missing: {}", split_path)
+        logger.warning(f"VOC split file missing: {split_path}")
         return []
 
     ids = []
@@ -218,12 +218,12 @@ class VocConverter(FormatConverter):
         tree = defused_parse(xml_path)
         root = tree.getroot()
         if root is None:
-            logger.warning("Empty XML root in VOC: {}", xml_path)
+            logger.warning(f"Empty XML root in VOC: {xml_path}")
             return None
 
         filename = root.findtext("filename")
         if not filename:
-            logger.warning("Missing filename in VOC: {}", xml_path)
+            logger.warning(f"Missing filename in VOC: {xml_path}")
             return None
 
         image_path = voc_images_dir / filename
@@ -402,7 +402,7 @@ class VocConverter(FormatConverter):
         splits_to_write = params.splits or list(dataset.splits.keys())
         for split_name in splits_to_write:
             if split_name not in dataset.splits:
-                logger.warning("Split '{}' not found in dataset, skipping", split_name)
+                logger.warning(f"Split '{split_name}' not found in dataset, skipping")
                 continue
 
             split = dataset.splits[split_name]

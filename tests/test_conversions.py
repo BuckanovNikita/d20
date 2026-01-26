@@ -445,3 +445,85 @@ def test_yolo_read_from_yaml(tmp_path: Path, yaml_path: Path) -> None:
         coco_labels_path = coco_dir / "annotations" / f"{split}.json"
         assert coco_labels_path.exists()
         assert _read_coco_image_count(coco_labels_path) > 0
+
+
+@pytest.mark.parametrize("yaml_path", DATASET_YAMLS)
+def test_coco_yolo_direct_conversion(tmp_path: Path, yaml_path: Path) -> None:
+    """Test direct COCO to YOLO conversion."""
+    fixture = _resolve_yolo_fixture(yaml_path)
+    fixture_root = fixture.root
+    data = fixture.data
+
+    class_names = _load_class_names(data)
+    images_dir = "images"
+    labels_dir = "labels"
+    splits = _detect_splits(fixture_root, images_dir)
+
+    # Convert YOLO to COCO first
+    yolo_converter = get_converter("yolo")
+    detected = yolo_converter.autodetect(fixture_root)
+    if not isinstance(detected, YoloDetectedParams):
+        msg = f"Expected YoloDetectedParams, got {type(detected)}"
+        raise TypeError(msg)
+    read_params = YoloDetectedParams(
+        input_path=detected.input_path,
+        class_names=class_names,
+        splits=splits,
+        images_dir=images_dir,
+        labels_dir=labels_dir,
+        annotations_dir=detected.annotations_dir,
+        yaml_path=detected.yaml_path,
+        dataset_root=detected.dataset_root,
+    )
+
+    config = WriteParamsConfig(class_names=class_names, splits=splits, images_dir=images_dir, labels_dir=labels_dir)
+    write_params = _build_write_params("coco", config)
+
+    coco_dir = tmp_path / "coco"
+    request = ConversionRequest(
+        input_format="yolo",
+        output_format="coco",
+        input_path=fixture_root,
+        output_dir=coco_dir,
+        read_params=read_params,
+        write_params=write_params,
+    )
+    convert_dataset(request)
+
+    # Now convert COCO to YOLO
+    coco_converter = get_converter("coco")
+    coco_detected = coco_converter.autodetect(coco_dir)
+    if not isinstance(coco_detected, CocoDetectedParams):
+        msg = f"Expected CocoDetectedParams, got {type(coco_detected)}"
+        raise TypeError(msg)
+    coco_read_params = CocoDetectedParams(
+        input_path=coco_detected.input_path,
+        class_names=class_names,
+        splits=splits,
+        images_dir=images_dir,
+        labels_dir=coco_detected.labels_dir,
+        annotations_dir="annotations",
+        split_files=coco_detected.split_files,
+    )
+
+    yolo_write_params = _build_write_params("yolo", config)
+
+    yolo_dir = tmp_path / "yolo_from_coco"
+    request = ConversionRequest(
+        input_format="coco",
+        output_format="yolo",
+        input_path=coco_dir,
+        output_dir=yolo_dir,
+        read_params=coco_read_params,
+        write_params=yolo_write_params,
+    )
+    convert_dataset(request)
+
+    # Verify YOLO conversion
+    yolo_config_verify = VerificationConfig(
+        fixture_root=fixture_root,
+        splits=splits,
+        images_dir=images_dir,
+        labels_dir=labels_dir,
+    )
+    _verify_yolo_conversion(yolo_dir, yolo_config_verify)

@@ -71,7 +71,10 @@ select = [
     "TID",  # flake8-tidy-imports
     "Q",    # flake8-quotes,
     "D",
-    "FLY"
+    "FLY",
+    "SLF",
+    "C",
+    "ANN",
 ]
 ignore = [
     "PLR2004", # magic value used in comparison
@@ -91,7 +94,7 @@ known-first-party = ["d20"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py
-"tests/**/*.py" = ["S101"]  # Allow assert statements in tests
+"tests/**/*.py" = ["S101", "SLF"]  # Allow assert statements in tests
 
 [tool.mypy]
 python_version = "3.10"
