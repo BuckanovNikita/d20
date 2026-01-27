@@ -14,11 +14,10 @@ from d20.reporting import export_fiftyone
 from d20.types import (
     CocoDetectedParams,
     CocoWriteDetectedParams,
+    DetectedParams,
     ExportOptions,
-    VocDetectedParams,
     VocWriteDetectedParams,
     WriteDetectedParams,
-    YoloDetectedParams,
     YoloWriteDetectedParams,
 )
 
@@ -85,10 +84,78 @@ def _get_arg_value(args: argparse.Namespace, attr: str, default: str | None = No
     return default
 
 
+class WriteParamsFactory:
+    """Factory for creating WriteDetectedParams instances."""
+
+    @staticmethod
+    def create(
+        format_name: str,
+        detected_params: DetectedParams,
+        args: argparse.Namespace,
+    ) -> WriteDetectedParams:
+        """Create WriteDetectedParams from DetectedParams and CLI arguments.
+
+        Args:
+            format_name: Output format name
+            detected_params: DetectedParams from autodetect()
+            args: Parsed CLI arguments
+
+        Returns:
+            WriteDetectedParams for the specified format
+
+        Raises:
+            ValueError: If class names are missing or format is unknown
+
+        """
+        if not detected_params.class_names:
+            msg = "Class names are required for writing datasets"
+            raise ValueError(msg)
+
+        # Extract common parameters with CLI overrides
+        class_names = detected_params.class_names
+        splits = detected_params.splits
+        images_dir = _get_arg_value(args, "images_dir") or detected_params.images_dir or "images"
+        labels_dir = _get_arg_value(args, "labels_dir") or detected_params.labels_dir or "labels"
+        annotations_dir = _get_arg_value(args, "annotations_dir") or detected_params.annotations_dir or "annotations"
+
+        # Override splits if provided
+        if hasattr(args, "splits") and args.splits:
+            splits = _parse_list(args.splits)
+
+        # Create format-specific WriteParams
+        if format_name == "yolo":
+            return YoloWriteDetectedParams(
+                class_names=class_names,
+                splits=splits,
+                images_dir=images_dir,
+                labels_dir=labels_dir,
+                annotations_dir=annotations_dir,
+            )
+        if format_name == "coco":
+            return CocoWriteDetectedParams(
+                class_names=class_names,
+                splits=splits,
+                images_dir=images_dir,
+                labels_dir=labels_dir,
+                annotations_dir=annotations_dir,
+            )
+        if format_name == "voc":
+            return VocWriteDetectedParams(
+                class_names=class_names,
+                splits=splits,
+                images_dir=images_dir,
+                labels_dir=labels_dir,
+                annotations_dir=annotations_dir,
+            )
+
+        msg = f"Unknown format: {format_name}"
+        raise ValueError(msg)
+
+
 def _update_detected_params_with_cli(
-    params: YoloDetectedParams | CocoDetectedParams | VocDetectedParams,
+    params: DetectedParams,
     args: argparse.Namespace,
-) -> YoloDetectedParams | CocoDetectedParams | VocDetectedParams:
+) -> DetectedParams:
     """Update DetectedParams with CLI arguments (override autodetected values).
 
     Args:
@@ -124,7 +191,7 @@ def _update_detected_params_with_cli(
 
     # Handle COCO special case: single JSON file with images_path
     if (
-        isinstance(params, CocoDetectedParams)
+        params.get_format_name() == "coco"
         and hasattr(args, "images_path")
         and args.images_path
         and isinstance(params.input_path, Path)
@@ -156,7 +223,7 @@ def _update_detected_params_with_cli(
 
 def _build_write_params(
     format_name: str,
-    detected_params: YoloDetectedParams | CocoDetectedParams | VocDetectedParams,
+    detected_params: DetectedParams,
     args: argparse.Namespace,
 ) -> WriteDetectedParams:
     """Build WriteDetectedParams from DetectedParams and CLI arguments.
@@ -170,55 +237,13 @@ def _build_write_params(
         WriteDetectedParams for the specified format
 
     """
-    if not detected_params.class_names:
-        msg = "Class names are required for writing datasets"
-        raise ValueError(msg)
-
-    # Extract common parameters with CLI overrides
-    class_names = detected_params.class_names
-    splits = detected_params.splits
-    images_dir = _get_arg_value(args, "images_dir") or detected_params.images_dir or "images"
-    labels_dir = _get_arg_value(args, "labels_dir") or detected_params.labels_dir or "labels"
-    annotations_dir = _get_arg_value(args, "annotations_dir") or detected_params.annotations_dir or "annotations"
-
-    # Override splits if provided
-    if hasattr(args, "splits") and args.splits:
-        splits = _parse_list(args.splits)
-
-    # Factory pattern for creating WriteDetectedParams
-    if format_name == "yolo":
-        return YoloWriteDetectedParams(
-            class_names=class_names,
-            splits=splits,
-            images_dir=images_dir,
-            labels_dir=labels_dir,
-            annotations_dir=annotations_dir,
-        )
-    if format_name == "coco":
-        return CocoWriteDetectedParams(
-            class_names=class_names,
-            splits=splits,
-            images_dir=images_dir,
-            labels_dir=labels_dir,
-            annotations_dir=annotations_dir,
-        )
-    if format_name == "voc":
-        return VocWriteDetectedParams(
-            class_names=class_names,
-            splits=splits,
-            images_dir=images_dir,
-            labels_dir=labels_dir,
-            annotations_dir=annotations_dir,
-        )
-
-    msg = f"Unknown format: {format_name}"
-    raise ValueError(msg)
+    return WriteParamsFactory.create(format_name, detected_params, args)
 
 
 def _ensure_class_names(
-    params: YoloDetectedParams | CocoDetectedParams | VocDetectedParams,
+    params: DetectedParams,
     args: argparse.Namespace,
-) -> YoloDetectedParams | CocoDetectedParams | VocDetectedParams:
+) -> DetectedParams:
     """Ensure class names are available in params, loading from file if needed."""
     if params.class_names:
         return params
@@ -246,11 +271,6 @@ def _handle_convert_command(args: argparse.Namespace, parser: argparse.ArgumentP
     # Autodetect input format parameters
     input_converter = get_converter(input_format)
     detected = input_converter.autodetect(input_path)
-
-    # Type narrowing: autodetect returns specific implementation
-    if not isinstance(detected, (YoloDetectedParams, CocoDetectedParams, VocDetectedParams)):
-        msg = f"Unexpected DetectedParams type: {type(detected)}"
-        raise TypeError(msg)
 
     # Update with CLI overrides
     read_params = _update_detected_params_with_cli(detected, args)
@@ -291,11 +311,6 @@ def _handle_export_command(args: argparse.Namespace) -> None:
     # Autodetect format parameters
     converter = get_converter(format_name)
     detected = converter.autodetect(input_path)
-
-    # Type narrowing: autodetect returns specific implementation
-    if not isinstance(detected, (YoloDetectedParams, CocoDetectedParams, VocDetectedParams)):
-        msg = f"Unexpected DetectedParams type: {type(detected)}"
-        raise TypeError(msg)
 
     # Update with CLI overrides
     read_params = _update_detected_params_with_cli(detected, args)

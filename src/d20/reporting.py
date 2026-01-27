@@ -7,12 +7,9 @@ from loguru import logger
 
 from d20.formats import get_converter
 from d20.types import (
-    CocoDetectedParams,
     DetectedParams,
     ExportOptions,
     Split,
-    VocDetectedParams,
-    YoloDetectedParams,
 )
 
 
@@ -25,15 +22,15 @@ def _get_format_from_params(params: DetectedParams) -> str:
     Returns:
         Format name (e.g., 'yolo', 'coco', 'voc')
 
+    Raises:
+        ValueError: If params doesn't implement get_format_name() method
+
     """
-    if isinstance(params, YoloDetectedParams):
-        return "yolo"
-    if isinstance(params, CocoDetectedParams):
-        return "coco"
-    if isinstance(params, VocDetectedParams):
-        return "voc"
-    msg = f"Unknown DetectedParams type: {type(params)}"
-    raise ValueError(msg)
+    try:
+        return params.get_format_name()
+    except AttributeError as e:
+        msg = f"Unknown DetectedParams type: {type(params)}"
+        raise ValueError(msg) from e
 
 
 def export_fiftyone(

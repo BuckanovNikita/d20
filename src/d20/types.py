@@ -105,6 +105,15 @@ class DetectedParams(Protocol):
     labels_dir: str | None
     annotations_dir: str | None
 
+    def get_format_name(self) -> str:
+        """Return the format name (e.g., 'yolo', 'coco', 'voc').
+
+        Returns:
+            Format name string
+
+        """
+        ...
+
     def with_overrides(
         self,
         class_names: list[str] | None = None,
@@ -143,6 +152,10 @@ class YoloDetectedParams:
     yaml_path: Path | None = None  # Format-specific: path to data.yaml
     dataset_root: Path | None = None  # Format-specific: root from YAML
 
+    def get_format_name(self) -> str:
+        """Return the format name."""
+        return "yolo"
+
     def with_overrides(
         self,
         class_names: list[str] | None = None,
@@ -174,6 +187,10 @@ class CocoDetectedParams:
     annotations_dir: str | None = None
     split_files: dict[str, Path] | None = None  # Format-specific: explicit split files
 
+    def get_format_name(self) -> str:
+        """Return the format name."""
+        return "coco"
+
     def with_overrides(
         self,
         class_names: list[str] | None = None,
@@ -204,6 +221,10 @@ class VocDetectedParams:
     labels_dir: str | None = None
     annotations_dir: str | None = None
     auto_detect_splits: bool = False  # Format-specific: auto-detect from ImageSets/Main
+
+    def get_format_name(self) -> str:
+        """Return the format name."""
+        return "voc"
 
     def with_overrides(
         self,
