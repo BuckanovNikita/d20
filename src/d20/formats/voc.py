@@ -10,6 +10,7 @@ from xml.etree.ElementTree import Element, ElementTree, SubElement
 from defusedxml.ElementTree import parse as defused_parse
 from loguru import logger
 from PIL import Image
+from typing_extensions import override
 
 from d20.formats.base import FormatConverter, register_converter
 from d20.types import (
@@ -40,6 +41,41 @@ class EmptyPathListError(ValueError):
     def __init__(self) -> None:
         """Initialize error."""
         super().__init__("Empty path list provided for VOC format")
+
+
+class InvalidVocNumericValueError(ValueError):
+    """Raised when VOC XML contains invalid numeric value."""
+
+    def __init__(self, field: str, value: str, error: Exception) -> None:
+        """Initialize error with field, value and original error."""
+        super().__init__(f"Invalid numeric value in VOC XML: field '{field}' = '{value}': {error}")
+        self.field = field
+        self.value = value
+        self.original_error = error
+
+
+class InvalidVocBboxError(ValueError):
+    """Raised when VOC bounding box is invalid."""
+
+    def __init__(self, bbox: tuple[int, int, int, int], image_size: tuple[int, int] | None = None) -> None:
+        """Initialize error with bbox and optional image size."""
+        xmin, ymin, xmax, ymax = bbox
+        if image_size:
+            img_w, img_h = image_size
+            msg = (
+                f"Invalid bounding box ({xmin}, {ymin}, {xmax}, {ymax}) for image size ({img_w}, {img_h}): "
+                f"xmin={xmin} < xmax={xmax} and ymin={ymin} < ymax={ymax} must be true, "
+                f"bbox must be within image bounds and non-negative"
+            )
+        else:
+            msg = (
+                f"Invalid bounding box ({xmin}, {ymin}, {xmax}, {ymax}): "
+                f"xmin={xmin} < xmax={xmax} and ymin={ymin} < ymax={ymax} must be true, "
+                f"coordinates must be non-negative"
+            )
+        super().__init__(msg)
+        self.bbox = bbox
+        self.image_size = image_size
 
 
 def _read_split_ids(image_sets_dir: Path, split: str) -> list[str]:
@@ -229,8 +265,19 @@ class VocConverter(FormatConverter):
         image_path = voc_images_dir / filename
         size_node = root.find("size")
         if size_node is not None:
-            width = int(size_node.findtext("width", "0"))
-            height = int(size_node.findtext("height", "0"))
+            width_str = size_node.findtext("width", "0")
+            height_str = size_node.findtext("height", "0")
+            try:
+                width = int(width_str)
+            except ValueError as e:
+                raise InvalidVocNumericValueError("width", width_str, e) from e
+            try:
+                height = int(height_str)
+            except ValueError as e:
+                raise InvalidVocNumericValueError("height", height_str, e) from e
+
+            if width <= 0 or height <= 0:
+                raise InvalidVocBboxError((0, 0, width, height), (width, height))
         else:
             width, height = _read_image_size(image_path)
 
@@ -266,18 +313,47 @@ class VocConverter(FormatConverter):
         for obj in root.findall("object"):
             name = obj.findtext("name")
             if not name:
+                logger.warning(f"Missing 'name' field in VOC object for image {image_id}, skipping")
                 continue
             if name not in class_names:
                 raise UnknownClassNameError(name)
 
             bbox = obj.find("bndbox")
             if bbox is None:
+                logger.warning(f"Missing 'bndbox' element in VOC object for image {image_id}, skipping")
                 continue
 
-            xmin = int(bbox.findtext("xmin", "1")) - 1
-            ymin = int(bbox.findtext("ymin", "1")) - 1
-            xmax = int(bbox.findtext("xmax", "1"))
-            ymax = int(bbox.findtext("ymax", "1"))
+            # Validate and convert coordinates
+            xmin_str = bbox.findtext("xmin", "1")
+            ymin_str = bbox.findtext("ymin", "1")
+            xmax_str = bbox.findtext("xmax", "1")
+            ymax_str = bbox.findtext("ymax", "1")
+
+            try:
+                xmin = int(xmin_str) - 1
+            except ValueError as e:
+                raise InvalidVocNumericValueError("xmin", xmin_str, e) from e
+
+            try:
+                ymin = int(ymin_str) - 1
+            except ValueError as e:
+                raise InvalidVocNumericValueError("ymin", ymin_str, e) from e
+
+            try:
+                xmax = int(xmax_str)
+            except ValueError as e:
+                raise InvalidVocNumericValueError("xmax", xmax_str, e) from e
+
+            try:
+                ymax = int(ymax_str)
+            except ValueError as e:
+                raise InvalidVocNumericValueError("ymax", ymax_str, e) from e
+
+            # Validate bbox coordinates
+            if xmin < 0 or ymin < 0:
+                raise InvalidVocBboxError((xmin, ymin, xmax, ymax))
+            if xmin >= xmax or ymin >= ymax:
+                raise InvalidVocBboxError((xmin, ymin, xmax, ymax))
 
             annotations.append(
                 Annotation(
@@ -329,6 +405,7 @@ class VocConverter(FormatConverter):
 
         return Split(name=split_name, images=images, annotations=annotations)
 
+    @override
     def read(
         self,
         params: VocDetectedParams,  # type: ignore[override]
@@ -377,6 +454,7 @@ class VocConverter(FormatConverter):
 
         return Dataset(splits=splits_dict, class_names=params.class_names)
 
+    @override
     def write(
         self,
         output_dir: Path,

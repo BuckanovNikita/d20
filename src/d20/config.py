@@ -27,8 +27,38 @@ class ConversionConfig(BaseModel):
 
 
 def load_config(path: Path) -> ConversionConfig:
-    """Load conversion configuration from a YAML file."""
-    data = yaml.safe_load(path.read_text())
+    """Load conversion configuration from a YAML file.
+
+    Args:
+        path: Path to YAML configuration file
+
+    Returns:
+        ConversionConfig instance
+
+    Raises:
+        FileNotFoundError: If config file does not exist
+        yaml.YAMLError: If YAML parsing fails
+        ValueError: If config validation fails
+
+    """
+    if not path.exists():
+        msg = f"Configuration file not found: {path}"
+        raise FileNotFoundError(msg)
+
+    try:
+        data = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as e:
+        msg = f"Failed to parse YAML configuration file {path}: {e}"
+        raise ValueError(msg) from e
+    except OSError as e:
+        msg = f"Failed to read configuration file {path}: {e}"
+        raise ValueError(msg) from e
+
     if data is None:
         data = {}
-    return ConversionConfig.model_validate(data)
+
+    try:
+        return ConversionConfig.model_validate(data)
+    except Exception as e:
+        msg = f"Configuration validation failed for {path}: {e}"
+        raise ValueError(msg) from e

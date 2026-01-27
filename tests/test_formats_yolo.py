@@ -11,13 +11,16 @@ from PIL import Image
 from d20.formats.yolo import (
     DatasetRootNotFoundError,
     EmptyPathListError,
+    InvalidYoloBboxError,
+    InvalidYoloCoordinateError,
+    InvalidYoloNumericValueError,
     MissingYoloNamesError,
     UnknownClassIdError,
     UnsupportedYoloNamesStructureError,
     YoloConverter,
     yaml_safe_dump,
 )
-from d20.types import YoloDetectedParams, YoloWriteDetectedParams
+from d20.types import ImageInfo, YoloDetectedParams, YoloWriteDetectedParams
 
 
 def test_unknown_class_id_error() -> None:
@@ -365,3 +368,157 @@ def test_yolo_converter_write_data_yaml_data_split(tmp_path: Path) -> None:
     yaml_file = output_dir / "data.yaml"
     data = yaml.safe_load(yaml_file.read_text())
     assert data["data"] == "images"
+
+
+# Negative tests for validation failures
+
+
+def test_yolo_parse_invalid_numeric_class_id(tmp_path: Path) -> None:
+    """Test _parse_yolo_annotation_line() raises error for invalid numeric class_id."""
+    converter = YoloConverter()
+    img_path = tmp_path / "test.jpg"
+    img = Image.new("RGB", (100, 100), color="red")
+    img.save(img_path)
+
+    image = ImageInfo(
+        image_id="test",
+        file_name="test.jpg",
+        width=100,
+        height=100,
+        path=img_path,
+    )
+
+    with pytest.raises(InvalidYoloNumericValueError) as exc_info:
+        converter._parse_yolo_annotation_line("abc 0.5 0.5 0.1 0.1", image, ["cat", "dog"])
+    assert exc_info.value.field == "class_id"
+    assert exc_info.value.value == "abc"
+
+
+def test_yolo_parse_invalid_numeric_x_center(tmp_path: Path) -> None:
+    """Test _parse_yolo_annotation_line() raises error for invalid numeric x_center."""
+    converter = YoloConverter()
+    img_path = tmp_path / "test.jpg"
+    img = Image.new("RGB", (100, 100), color="red")
+    img.save(img_path)
+
+    image = ImageInfo(
+        image_id="test",
+        file_name="test.jpg",
+        width=100,
+        height=100,
+        path=img_path,
+    )
+
+    with pytest.raises(InvalidYoloNumericValueError) as exc_info:
+        converter._parse_yolo_annotation_line("0 xyz 0.5 0.1 0.1", image, ["cat", "dog"])
+    assert exc_info.value.field == "x_center"
+    assert exc_info.value.value == "xyz"
+
+
+def test_yolo_parse_invalid_coordinate_out_of_range(tmp_path: Path) -> None:
+    """Test _parse_yolo_annotation_line() raises error for coordinates outside [0, 1]."""
+    converter = YoloConverter()
+    img_path = tmp_path / "test.jpg"
+    img = Image.new("RGB", (100, 100), color="red")
+    img.save(img_path)
+
+    image = ImageInfo(
+        image_id="test",
+        file_name="test.jpg",
+        width=100,
+        height=100,
+        path=img_path,
+    )
+
+    # Test x_center > 1.0
+    with pytest.raises(InvalidYoloCoordinateError) as exc_info:
+        converter._parse_yolo_annotation_line("0 1.5 0.5 0.1 0.1", image, ["cat", "dog"])
+    assert exc_info.value.coord_name == "x_center"
+    assert exc_info.value.value == 1.5
+
+    # Test y_center < 0.0
+    with pytest.raises(InvalidYoloCoordinateError) as exc_info:
+        converter._parse_yolo_annotation_line("0 0.5 -0.1 0.1 0.1", image, ["cat", "dog"])
+    assert exc_info.value.coord_name == "y_center"
+    assert exc_info.value.value == -0.1
+
+    # Test width > 1.0
+    with pytest.raises(InvalidYoloCoordinateError) as exc_info:
+        converter._parse_yolo_annotation_line("0 0.5 0.5 1.5 0.1", image, ["cat", "dog"])
+    assert exc_info.value.coord_name == "width"
+    assert exc_info.value.value == 1.5
+
+    # Test height < 0.0
+    with pytest.raises(InvalidYoloCoordinateError) as exc_info:
+        converter._parse_yolo_annotation_line("0 0.5 0.5 0.1 -0.1", image, ["cat", "dog"])
+    assert exc_info.value.coord_name == "height"
+    assert exc_info.value.value == -0.1
+
+
+def test_yolo_parse_invalid_bbox_negative_dimensions(tmp_path: Path) -> None:
+    """Test _parse_yolo_annotation_line() raises error for invalid bbox with negative dimensions."""
+    converter = YoloConverter()
+    img_path = tmp_path / "test.jpg"
+    img = Image.new("RGB", (100, 100), color="red")
+    img.save(img_path)
+
+    image = ImageInfo(
+        image_id="test",
+        file_name="test.jpg",
+        width=100,
+        height=100,
+        path=img_path,
+    )
+
+    # Test with width that results in negative bbox_w
+    # x_center=0.5, width=0.6 -> bbox_x = (0.5 - 0.6/2) * 100 = -10, bbox_w = 60
+    # This should pass coordinate validation but fail bbox validation if width calculation is wrong
+    # Actually, let's test with coordinates that create zero or negative width
+    # x_center=0.1, width=0.15 -> bbox_x = (0.1 - 0.15/2) * 100 = 2.5, bbox_w = 15 (valid)
+    # Let's use edge case: x_center=0.0, width=0.0 -> bbox_w = 0 (should fail)
+    with pytest.raises(InvalidYoloBboxError) as exc_info:
+        converter._parse_yolo_annotation_line("0 0.5 0.5 0.0 0.1", image, ["cat", "dog"])
+    assert exc_info.value.image_size == (100, 100)
+
+
+def test_yolo_parse_invalid_bbox_out_of_bounds(tmp_path: Path) -> None:
+    """Test _parse_yolo_annotation_line() raises error for bbox outside image bounds."""
+    converter = YoloConverter()
+    img_path = tmp_path / "test.jpg"
+    img = Image.new("RGB", (100, 100), color="red")
+    img.save(img_path)
+
+    image = ImageInfo(
+        image_id="test",
+        file_name="test.jpg",
+        width=100,
+        height=100,
+        path=img_path,
+    )
+
+    # Test bbox that extends beyond image bounds
+    # x_center=0.9, width=0.3 -> bbox_x = (0.9 - 0.3/2) * 100 = 75, bbox_w = 30
+    # bbox_x + bbox_w = 105 > 100 (should fail)
+    with pytest.raises(InvalidYoloBboxError) as exc_info:
+        converter._parse_yolo_annotation_line("0 0.9 0.5 0.3 0.1", image, ["cat", "dog"])
+    assert exc_info.value.image_size == (100, 100)
+
+
+def test_yolo_parse_negative_class_id(tmp_path: Path) -> None:
+    """Test _parse_yolo_annotation_line() raises error for negative class_id."""
+    converter = YoloConverter()
+    img_path = tmp_path / "test.jpg"
+    img = Image.new("RGB", (100, 100), color="red")
+    img.save(img_path)
+
+    image = ImageInfo(
+        image_id="test",
+        file_name="test.jpg",
+        width=100,
+        height=100,
+        path=img_path,
+    )
+
+    with pytest.raises(UnknownClassIdError) as exc_info:
+        converter._parse_yolo_annotation_line("-1 0.5 0.5 0.1 0.1", image, ["cat", "dog"])
+    assert exc_info.value.class_id == -1

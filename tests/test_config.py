@@ -97,7 +97,7 @@ def test_load_config_empty_yaml(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text("")
 
-    with pytest.raises(ValidationError, match="class_names"):
+    with pytest.raises(ValueError, match="Configuration validation failed"):
         load_config(config_path)
 
 
@@ -106,7 +106,7 @@ def test_load_config_none_yaml(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text("null")
 
-    with pytest.raises(ValidationError, match="class_names"):
+    with pytest.raises(ValueError, match="Configuration validation failed"):
         load_config(config_path)
 
 
@@ -115,5 +115,36 @@ def test_load_config_invalid_yaml(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text("invalid: yaml: content: [unclosed")
 
-    with pytest.raises(yaml.YAMLError):
+    with pytest.raises(ValueError, match="Failed to parse YAML"):
+        load_config(config_path)
+
+
+# Negative tests for validation failures
+
+
+def test_load_config_nonexistent_file(tmp_path: Path) -> None:
+    """Test load_config raises error for nonexistent file."""
+    config_path = tmp_path / "nonexistent.yaml"
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        load_config(config_path)
+    assert str(exc_info.value) == f"Configuration file not found: {config_path}"
+
+
+def test_load_config_invalid_yaml_syntax(tmp_path: Path) -> None:
+    """Test load_config raises error for invalid YAML syntax."""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("invalid: yaml: [unclosed bracket")
+
+    with pytest.raises(ValueError, match="Failed to parse YAML"):
+        load_config(config_path)
+
+
+def test_load_config_validation_error(tmp_path: Path) -> None:
+    """Test load_config raises error for validation failure."""
+    config_path = tmp_path / "config.yaml"
+    # Invalid: class_names must be a list, not a string
+    config_path.write_text("class_names: not_a_list")
+
+    with pytest.raises(ValueError, match="Configuration validation failed"):
         load_config(config_path)

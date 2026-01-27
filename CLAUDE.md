@@ -13,6 +13,7 @@ Run
 ruff format .
 ruff check .
 mypy .
+pytest .
 ```
 then fix all erros. 
 1. tets also must be checked with linters
@@ -43,8 +44,9 @@ then fix all erros.
 1. always use loguru for logging not print
 1. Use pydantic schemas for all configs
 1. preffer f-strings to loguru structured output
+
 ### Antipatterns
-1. check output logs in cli tests
+1. never check output logs in cli tests
 
 ### Documentation guidelines 
 1. always write to README.md in russian

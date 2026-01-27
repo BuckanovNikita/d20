@@ -189,10 +189,10 @@ class VocWriteDetectedParams:
     labels_dir: str = "labels"
     annotations_dir: str = "annotations"
 
-
 # Export options for FiftyOne
 @dataclass
 class ExportOptions:
     """Options for exporting to FiftyOne."""
 
     split: str | None = None  # Specific split to export (None = all splits)
+

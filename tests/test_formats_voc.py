@@ -12,7 +12,14 @@ from PIL import Image
 if TYPE_CHECKING:
     from pathlib import Path
 
-from d20.formats.voc import EmptyPathListError, UnknownClassNameError, VocConverter, _read_split_ids
+from d20.formats.voc import (
+    EmptyPathListError,
+    InvalidVocBboxError,
+    InvalidVocNumericValueError,
+    UnknownClassNameError,
+    VocConverter,
+    _read_split_ids,
+)
 from d20.types import (
     Annotation,
     Dataset,
@@ -399,3 +406,143 @@ def test_voc_converter_write_split_not_found(tmp_path: Path) -> None:
 
     # Should not raise, just skip
     converter.write(output_dir, dataset, params)
+
+
+# Negative tests for validation failures
+
+
+def test_voc_parse_invalid_numeric_width(tmp_path: Path) -> None:
+    """Test _parse_image_xml() raises error for invalid numeric width."""
+    converter = VocConverter()
+    xml_path = tmp_path / "test.xml"
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+
+    # Create XML with invalid width
+    root = Element("annotation")
+    SubElement(root, "filename").text = "test.jpg"
+    size = SubElement(root, "size")
+    SubElement(size, "width").text = "abc"  # Invalid
+    SubElement(size, "height").text = "100"
+
+    tree = ET.ElementTree(root)
+    tree.write(xml_path)
+
+    with pytest.raises(InvalidVocNumericValueError) as exc_info:
+        converter._parse_image_xml(xml_path, "test", images_dir)
+    assert exc_info.value.field == "width"
+    assert exc_info.value.value == "abc"
+
+
+def test_voc_parse_invalid_numeric_height(tmp_path: Path) -> None:
+    """Test _parse_image_xml() raises error for invalid numeric height."""
+    converter = VocConverter()
+    xml_path = tmp_path / "test.xml"
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+
+    # Create XML with invalid height
+    root = Element("annotation")
+    SubElement(root, "filename").text = "test.jpg"
+    size = SubElement(root, "size")
+    SubElement(size, "width").text = "100"
+    SubElement(size, "height").text = "xyz"  # Invalid
+
+    tree = ET.ElementTree(root)
+    tree.write(xml_path)
+
+    with pytest.raises(InvalidVocNumericValueError) as exc_info:
+        converter._parse_image_xml(xml_path, "test", images_dir)
+    assert exc_info.value.field == "height"
+    assert exc_info.value.value == "xyz"
+
+
+def test_voc_parse_invalid_bbox_numeric_values() -> None:
+    """Test _parse_annotations_from_xml() raises error for invalid numeric bbox values."""
+    converter = VocConverter()
+    root = Element("annotation")
+    obj = SubElement(root, "object")
+    SubElement(obj, "name").text = "cat"
+    bbox = SubElement(obj, "bndbox")
+    SubElement(bbox, "xmin").text = "abc"  # Invalid
+    SubElement(bbox, "ymin").text = "10"
+    SubElement(bbox, "xmax").text = "50"
+    SubElement(bbox, "ymax").text = "60"
+
+    with pytest.raises(InvalidVocNumericValueError) as exc_info:
+        converter._parse_annotations_from_xml(root, "test", ["cat", "dog"])
+    assert exc_info.value.field == "xmin"
+    assert exc_info.value.value == "abc"
+
+
+def test_voc_parse_invalid_bbox_xmin_ge_xmax() -> None:
+    """Test _parse_annotations_from_xml() raises error when xmin >= xmax."""
+    converter = VocConverter()
+    root = Element("annotation")
+    obj = SubElement(root, "object")
+    SubElement(obj, "name").text = "cat"
+    bbox = SubElement(obj, "bndbox")
+    SubElement(bbox, "xmin").text = "51"  # xmin > xmax (after -1 conversion: 50 >= 50)
+    SubElement(bbox, "ymin").text = "10"
+    SubElement(bbox, "xmax").text = "50"
+    SubElement(bbox, "ymax").text = "60"
+
+    with pytest.raises(InvalidVocBboxError) as exc_info:
+        converter._parse_annotations_from_xml(root, "test", ["cat", "dog"])
+    assert exc_info.value.bbox == (50, 9, 50, 60)  # xmin-1, ymin-1, xmax, ymax
+
+
+def test_voc_parse_invalid_bbox_ymin_ge_ymax() -> None:
+    """Test _parse_annotations_from_xml() raises error when ymin >= ymax."""
+    converter = VocConverter()
+    root = Element("annotation")
+    obj = SubElement(root, "object")
+    SubElement(obj, "name").text = "cat"
+    bbox = SubElement(obj, "bndbox")
+    SubElement(bbox, "xmin").text = "10"
+    SubElement(bbox, "ymin").text = "61"  # ymin > ymax (after -1 conversion: 60 >= 60)
+    SubElement(bbox, "xmax").text = "50"
+    SubElement(bbox, "ymax").text = "60"
+
+    with pytest.raises(InvalidVocBboxError) as exc_info:
+        converter._parse_annotations_from_xml(root, "test", ["cat", "dog"])
+    assert exc_info.value.bbox == (9, 60, 50, 60)  # xmin-1, ymin-1, xmax, ymax
+
+
+def test_voc_parse_invalid_bbox_negative_coordinates() -> None:
+    """Test _parse_annotations_from_xml() raises error for negative coordinates."""
+    converter = VocConverter()
+    root = Element("annotation")
+    obj = SubElement(root, "object")
+    SubElement(obj, "name").text = "cat"
+    bbox = SubElement(obj, "bndbox")
+    SubElement(bbox, "xmin").text = "-10"  # Negative
+    SubElement(bbox, "ymin").text = "10"
+    SubElement(bbox, "xmax").text = "50"
+    SubElement(bbox, "ymax").text = "60"
+
+    with pytest.raises(InvalidVocBboxError) as exc_info:
+        converter._parse_annotations_from_xml(root, "test", ["cat", "dog"])
+    assert exc_info.value.bbox == (-11, 9, 50, 60)  # xmin-1, ymin-1, xmax, ymax
+
+
+def test_voc_parse_invalid_image_size_zero_dimensions(tmp_path: Path) -> None:
+    """Test _parse_image_xml() raises error for zero or negative image dimensions."""
+    converter = VocConverter()
+    xml_path = tmp_path / "test.xml"
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+
+    # Create XML with zero width
+    root = Element("annotation")
+    SubElement(root, "filename").text = "test.jpg"
+    size = SubElement(root, "size")
+    SubElement(size, "width").text = "0"  # Invalid
+    SubElement(size, "height").text = "100"
+
+    tree = ET.ElementTree(root)
+    tree.write(xml_path)
+
+    with pytest.raises(InvalidVocBboxError) as exc_info:
+        converter._parse_image_xml(xml_path, "test", images_dir)
+    assert exc_info.value.image_size == (0, 100)

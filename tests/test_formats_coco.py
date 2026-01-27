@@ -14,6 +14,10 @@ if TYPE_CHECKING:
 from d20.formats.coco import (
     COCOCategoryMissingNameError,
     CocoConverter,
+    InvalidCocoBboxError,
+    InvalidCocoCategoryIdError,
+    InvalidCocoImageIdError,
+    InvalidCocoJsonError,
     SplitNamesMismatchError,
     UnknownClassNameError,
     _extract_categories_from_json_file,
@@ -82,14 +86,14 @@ def test_extract_categories_from_json_file_empty(tmp_path: Path) -> None:
 
 
 def test_extract_categories_from_json_file_invalid_json(tmp_path: Path) -> None:
-    """Test _extract_categories_from_json_file() with invalid JSON."""
+    """Test _extract_categories_from_json_file() raises error for invalid JSON."""
     json_file = tmp_path / "annotations.json"
     json_file.write_text("invalid json content")
 
-    # Should not raise, but return empty sets
-    names, mapping = _extract_categories_from_json_file(json_file)
-    assert names == set()
-    assert mapping == {}
+    # Should raise InvalidCocoJsonError
+    with pytest.raises(InvalidCocoJsonError) as exc_info:
+        _extract_categories_from_json_file(json_file)
+    assert exc_info.value.json_path == json_file
 
 
 def test_extract_categories_from_json_file_missing_categories(tmp_path: Path) -> None:
@@ -294,3 +298,207 @@ def test_coco_converter_write_split_not_found(tmp_path: Path) -> None:
 
     # Should not raise, just skip
     converter.write(output_dir, dataset, params)
+
+
+# Negative tests for validation failures
+
+
+def test_extract_categories_invalid_json_raises_error(tmp_path: Path) -> None:
+    """Test _extract_categories_from_json_file() raises error for invalid JSON."""
+    json_path = tmp_path / "invalid.json"
+    json_path.write_text("{ invalid json }")
+
+    with pytest.raises(InvalidCocoJsonError) as exc_info:
+        _extract_categories_from_json_file(json_path)
+    assert exc_info.value.json_path == json_path
+
+
+def test_extract_categories_missing_file_raises_error(tmp_path: Path) -> None:
+    """Test _extract_categories_from_json_file() raises error for missing file."""
+    json_path = tmp_path / "nonexistent.json"
+
+    with pytest.raises(InvalidCocoJsonError) as exc_info:
+        _extract_categories_from_json_file(json_path)
+    assert exc_info.value.json_path == json_path
+
+
+def test_coco_read_invalid_category_id(tmp_path: Path) -> None:
+    """Test _read_split_from_json() raises error for invalid category_id."""
+    converter = CocoConverter()
+    json_path = tmp_path / "train.json"
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+
+    # Create JSON with annotation referencing non-existent category_id
+    data = {
+        "images": [{"id": 1, "file_name": "img1.jpg", "width": 100, "height": 100}],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 999,  # Non-existent category_id
+                "bbox": [10, 10, 20, 20],
+            }
+        ],
+        "categories": [{"id": 1, "name": "cat"}],
+    }
+    json_path.write_text(json.dumps(data))
+
+    with pytest.raises(InvalidCocoCategoryIdError) as exc_info:
+        converter._read_split_from_json(json_path, tmp_path, ["cat"], "images", "train")
+    assert exc_info.value.category_id == 999
+    assert exc_info.value.available_ids == [1]
+
+
+def test_coco_read_invalid_image_id(tmp_path: Path) -> None:
+    """Test _read_split_from_json() raises error for invalid image_id in annotation."""
+    converter = CocoConverter()
+    json_path = tmp_path / "train.json"
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+
+    # Create JSON with annotation referencing non-existent image_id
+    data = {
+        "images": [{"id": 1, "file_name": "img1.jpg", "width": 100, "height": 100}],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 999,  # Non-existent image_id
+                "category_id": 1,
+                "bbox": [10, 10, 20, 20],
+            }
+        ],
+        "categories": [{"id": 1, "name": "cat"}],
+    }
+    json_path.write_text(json.dumps(data))
+
+    with pytest.raises(InvalidCocoImageIdError) as exc_info:
+        converter._read_split_from_json(json_path, tmp_path, ["cat"], "images", "train")
+    assert exc_info.value.image_id == "999"
+
+
+def test_coco_read_invalid_bbox_wrong_length(tmp_path: Path) -> None:
+    """Test _read_split_from_json() raises error for bbox with wrong length."""
+    converter = CocoConverter()
+    json_path = tmp_path / "train.json"
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+
+    # Create JSON with invalid bbox (wrong length)
+    data = {
+        "images": [{"id": 1, "file_name": "img1.jpg", "width": 100, "height": 100}],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 1,
+                "bbox": [10, 10, 20],  # Only 3 elements, should be 4
+            }
+        ],
+        "categories": [{"id": 1, "name": "cat"}],
+    }
+    json_path.write_text(json.dumps(data))
+
+    with pytest.raises(InvalidCocoBboxError) as exc_info:
+        converter._read_split_from_json(json_path, tmp_path, ["cat"], "images", "train")
+    assert exc_info.value.bbox == [10, 10, 20]
+
+
+def test_coco_read_invalid_bbox_negative_dimensions(tmp_path: Path) -> None:
+    """Test _read_split_from_json() raises error for bbox with negative dimensions."""
+    converter = CocoConverter()
+    json_path = tmp_path / "train.json"
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+
+    # Create JSON with invalid bbox (negative width)
+    data = {
+        "images": [{"id": 1, "file_name": "img1.jpg", "width": 100, "height": 100}],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 1,
+                "bbox": [10, 10, -20, 20],  # Negative width
+            }
+        ],
+        "categories": [{"id": 1, "name": "cat"}],
+    }
+    json_path.write_text(json.dumps(data))
+
+    with pytest.raises(InvalidCocoBboxError) as exc_info:
+        converter._read_split_from_json(json_path, tmp_path, ["cat"], "images", "train")
+    assert exc_info.value.bbox == [10, 10, -20, 20]
+    assert exc_info.value.image_size == (100, 100)
+
+
+def test_coco_read_invalid_bbox_out_of_bounds(tmp_path: Path) -> None:
+    """Test _read_split_from_json() raises error for bbox outside image bounds."""
+    converter = CocoConverter()
+    json_path = tmp_path / "train.json"
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+
+    # Create JSON with bbox extending beyond image bounds
+    data = {
+        "images": [{"id": 1, "file_name": "img1.jpg", "width": 100, "height": 100}],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 1,
+                "bbox": [90, 10, 20, 20],  # x + width = 110 > 100
+            }
+        ],
+        "categories": [{"id": 1, "name": "cat"}],
+    }
+    json_path.write_text(json.dumps(data))
+
+    with pytest.raises(InvalidCocoBboxError) as exc_info:
+        converter._read_split_from_json(json_path, tmp_path, ["cat"], "images", "train")
+    assert exc_info.value.bbox == [90, 10, 20, 20]
+    assert exc_info.value.image_size == (100, 100)
+
+
+def test_coco_write_invalid_image_id(tmp_path: Path) -> None:
+    """Test write() raises error for annotation with invalid image_id."""
+    converter = CocoConverter()
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+
+    # Create a dummy image file
+    img_path = tmp_path / "img1.jpg"
+    img = Image.new("RGB", (100, 100), color="red")
+    img.save(img_path)
+
+    # Create dataset with annotation referencing non-existent image
+    images = [
+        ImageInfo(
+            image_id="1",
+            file_name="img1.jpg",
+            width=100,
+            height=100,
+            path=img_path,
+        )
+    ]
+    annotations = [
+        Annotation(
+            image_id="999",  # Non-existent image_id
+            category_id=0,
+            bbox=(10, 10, 20, 20),
+        )
+    ]
+    split = Split(name="train", images=images, annotations=annotations)
+    dataset = Dataset(splits={"train": split}, class_names=["cat"])
+
+    params = CocoWriteDetectedParams(
+        class_names=["cat"],
+        splits=["train"],
+        images_dir="images",
+        labels_dir="labels",
+        annotations_dir="annotations",
+    )
+
+    with pytest.raises(InvalidCocoImageIdError) as exc_info:
+        converter.write(output_dir, dataset, params)
+    assert exc_info.value.image_id == "999"

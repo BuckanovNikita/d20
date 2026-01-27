@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 import yaml
 from loguru import logger
 from PIL import Image
-from typing_extensions import Unpack
+from typing_extensions import Unpack, override
 
 from d20.formats.base import FormatConverter, register_converter
 from d20.types import (
@@ -23,8 +23,7 @@ from d20.types import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-else:
-    pass
+
 
 
 class _NormalizeOptions(TypedDict, total=False):
@@ -90,7 +89,9 @@ class InvalidYoloNumericValueError(ValueError):
 
     def __init__(self, line: str, field: str, value: str, error: Exception) -> None:
         """Initialize error with line, field, value and original error."""
-        super().__init__(f"Invalid numeric value in YOLO annotation line '{line}': field '{field}' = '{value}': {error}")
+        super().__init__(
+            f"Invalid numeric value in YOLO annotation line '{line}': field '{field}' = '{value}': {error}"
+        )
         self.line = line
         self.field = field
         self.value = value
@@ -107,7 +108,7 @@ class InvalidYoloBboxError(ValueError):
         super().__init__(
             f"Invalid bounding box ({x}, {y}, {w}, {h}) for image size ({img_w}, {img_h}): "
             f"width={w} and height={h} must be positive, "
-            f"bbox must be within image bounds"
+            f"bbox must be within image bounds",
         )
         self.bbox = bbox
         self.image_size = image_size
@@ -331,6 +332,12 @@ class YoloConverter(FormatConverter):
         Returns:
             Annotation object or None if line is invalid
 
+        Raises:
+            InvalidYoloNumericValueError: If numeric conversion fails
+            UnknownClassIdError: If class_id is out of range
+            InvalidYoloCoordinateError: If coordinates are out of [0, 1] range
+            InvalidYoloBboxError: If calculated bbox is invalid
+
         """
         stripped = line.strip()
         if not stripped:
@@ -341,19 +348,66 @@ class YoloConverter(FormatConverter):
             logger.warning(f"Skipping invalid YOLO label line: {line}")
             return None
 
-        class_id = int(parts[0])
+        # Validate and convert class_id
+        try:
+            class_id = int(parts[0])
+        except ValueError as e:
+            raise InvalidYoloNumericValueError(line, "class_id", parts[0], e) from e
+
+        if class_id < 0:
+            raise UnknownClassIdError(class_id)
         if class_id >= len(class_names):
             raise UnknownClassIdError(class_id)
 
-        x_center = float(parts[1])
-        y_center = float(parts[2])
-        width = float(parts[3])
-        height = float(parts[4])
+        # Validate and convert coordinates
+        try:
+            x_center = float(parts[1])
+        except ValueError as e:
+            raise InvalidYoloNumericValueError(line, "x_center", parts[1], e) from e
 
+        try:
+            y_center = float(parts[2])
+        except ValueError as e:
+            raise InvalidYoloNumericValueError(line, "y_center", parts[2], e) from e
+
+        try:
+            width = float(parts[3])
+        except ValueError as e:
+            raise InvalidYoloNumericValueError(line, "width", parts[3], e) from e
+
+        try:
+            height = float(parts[4])
+        except ValueError as e:
+            raise InvalidYoloNumericValueError(line, "height", parts[4], e) from e
+
+        # Validate coordinate ranges [0, 1]
+        if not (0.0 <= x_center <= 1.0):
+            raise InvalidYoloCoordinateError("x_center", x_center)
+        if not (0.0 <= y_center <= 1.0):
+            raise InvalidYoloCoordinateError("y_center", y_center)
+        if not (0.0 <= width <= 1.0):
+            raise InvalidYoloCoordinateError("width", width)
+        if not (0.0 <= height <= 1.0):
+            raise InvalidYoloCoordinateError("height", height)
+
+        # Calculate bounding box
         bbox_x = (x_center - width / 2.0) * image.width
         bbox_y = (y_center - height / 2.0) * image.height
         bbox_w = width * image.width
         bbox_h = height * image.height
+
+        # Validate calculated bbox
+        if bbox_w <= 0 or bbox_h <= 0:
+            raise InvalidYoloBboxError((bbox_x, bbox_y, bbox_w, bbox_h), (image.width, image.height))
+
+        # Check if bbox is within image bounds (with small tolerance for floating point)
+        if (
+            bbox_x < -0.5
+            or bbox_y < -0.5
+            or (bbox_x + bbox_w) > image.width + 0.5
+            or (bbox_y + bbox_h) > image.height + 0.5
+        ):
+            raise InvalidYoloBboxError((bbox_x, bbox_y, bbox_w, bbox_h), (image.width, image.height))
 
         return Annotation(
             image_id=image.image_id,
@@ -437,9 +491,10 @@ class YoloConverter(FormatConverter):
             try:
                 class_names = self._load_class_names_from_yaml(yaml_data)
                 splits = self._detect_splits_from_yaml(yaml_data)
-            except (MissingYoloNamesError, UnsupportedYoloNamesStructureError):
+            except (MissingYoloNamesError, UnsupportedYoloNamesStructureError) as e:
                 # If YAML doesn't have names, we can't detect class_names
-                pass
+                # Log warning but continue autodetect (class_names will be None)
+                logger.warning(f"Could not detect class names from YAML during autodetect: {e}")
         elif path.is_dir():
             # Look for data.yaml in directory
             potential_yaml = path / "data.yaml"
@@ -449,9 +504,10 @@ class YoloConverter(FormatConverter):
                 try:
                     class_names = self._load_class_names_from_yaml(yaml_data)
                     splits = self._detect_splits_from_yaml(yaml_data)
-                except (MissingYoloNamesError, UnsupportedYoloNamesStructureError):
+                except (MissingYoloNamesError, UnsupportedYoloNamesStructureError) as e:
                     # If YAML doesn't have names, we can't detect class_names
-                    pass
+                    # Log warning but continue autodetect (class_names will be None)
+                    logger.warning(f"Could not detect class names from YAML during autodetect: {e}")
             else:
                 dataset_root = path
 
@@ -471,6 +527,7 @@ class YoloConverter(FormatConverter):
             dataset_root=dataset_root,
         )
 
+    @override
     def read(
         self,
         params: YoloDetectedParams,  # type: ignore[override]
@@ -501,6 +558,7 @@ class YoloConverter(FormatConverter):
 
         return Dataset(splits=splits_dict, class_names=class_names)
 
+    @override
     def write(
         self,
         output_dir: Path,

@@ -8,6 +8,7 @@ from shutil import copy2
 from typing import Any
 
 from loguru import logger
+from typing_extensions import override
 
 from d20.formats.base import FormatConverter, register_converter
 from d20.types import (
@@ -45,6 +46,55 @@ class SplitNamesMismatchError(ValueError):
         super().__init__("Number of split names must match number of JSON files")
 
 
+class InvalidCocoJsonError(ValueError):
+    """Raised when COCO JSON file is invalid or cannot be parsed."""
+
+    def __init__(self, json_path: Path, error: Exception) -> None:
+        """Initialize error with JSON path and original error."""
+        super().__init__(f"Failed to parse COCO JSON file {json_path}: {error}")
+        self.json_path = json_path
+        self.original_error = error
+
+
+class InvalidCocoCategoryIdError(ValueError):
+    """Raised when annotation references non-existent category_id."""
+
+    def __init__(self, category_id: int, available_ids: list[int]) -> None:
+        """Initialize error with category_id and available IDs."""
+        super().__init__(f"Invalid category_id {category_id}, available IDs: {available_ids}")
+        self.category_id = category_id
+        self.available_ids = available_ids
+
+
+class InvalidCocoImageIdError(ValueError):
+    """Raised when annotation references non-existent image_id."""
+
+    def __init__(self, image_id: str, available_ids: list[str]) -> None:
+        """Initialize error with image_id and available IDs."""
+        super().__init__(f"Invalid image_id {image_id}, available IDs: {list(available_ids)[:10]}...")
+        self.image_id = image_id
+        self.available_ids = available_ids
+
+
+class InvalidCocoBboxError(ValueError):
+    """Raised when COCO bbox is invalid."""
+
+    def __init__(self, bbox: list[float], image_size: tuple[int, int] | None = None) -> None:
+        """Initialize error with bbox and optional image size."""
+        if image_size:
+            img_w, img_h = image_size
+            msg = (
+                f"Invalid bounding box {bbox} for image size ({img_w}, {img_h}): "
+                f"bbox must have 4 elements [x, y, width, height], all non-negative, "
+                f"and within image bounds"
+            )
+        else:
+            msg = f"Invalid bounding box {bbox}: bbox must have 4 elements [x, y, width, height], all non-negative"
+        super().__init__(msg)
+        self.bbox = bbox
+        self.image_size = image_size
+
+
 def _resolve_split_dir(base_dir: Path, split: str) -> Path:
     split_dir = base_dir / split
     return split_dir if split_dir.exists() else base_dir
@@ -58,6 +108,9 @@ def _extract_categories_from_json_file(json_path: Path) -> tuple[set[str], dict[
 
     Returns:
         Tuple of (set of category names, dict mapping name to id)
+
+    Raises:
+        InvalidCocoJsonError: If JSON file cannot be parsed or read
 
     """
     category_names: set[str] = set()
@@ -73,11 +126,11 @@ def _extract_categories_from_json_file(json_path: Path) -> tuple[set[str], dict[
                 if cat_id is not None and name not in category_map:
                     category_map[name] = int(cat_id)
     except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse JSON file {json_path}: {e}")
+        raise InvalidCocoJsonError(json_path, e) from e
     except OSError as e:
-        logger.warning(f"Failed to read JSON file {json_path}: {e}")
+        raise InvalidCocoJsonError(json_path, e) from e
     except (KeyError, TypeError, ValueError) as e:
-        logger.warning(f"Unexpected structure in JSON file {json_path}: {e}")
+        raise InvalidCocoJsonError(json_path, e) from e
     return category_names, category_map
 
 
@@ -194,7 +247,11 @@ class CocoConverter(FormatConverter):
             logger.warning(f"COCO labels file missing: {json_path}")
             return Split(name=split_name, images=[], annotations=[])
 
-        data = json.loads(json_path.read_text())
+        try:
+            data = json.loads(json_path.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            raise InvalidCocoJsonError(json_path, e) from e
+
         categories = data.get("categories", [])
         category_map: dict[int, int] = {}
         for category in categories:
@@ -207,35 +264,89 @@ class CocoConverter(FormatConverter):
 
         images_dir = _resolve_split_dir(input_dir / images_dir_name, split_name)
         images: list[ImageInfo] = []
+        image_id_set: set[str] = set()
         for image in data.get("images", []):
-            file_name = image["file_name"]
+            try:
+                file_name = image["file_name"]
+                image_id = str(image["id"])
+                width = int(image["width"])
+                height = int(image["height"])
+            except (KeyError, ValueError, TypeError) as e:
+                raise InvalidCocoJsonError(json_path, ValueError(f"Invalid image data: {e}")) from e
+
+            if width <= 0 or height <= 0:
+                raise InvalidCocoBboxError([0, 0, width, height], (width, height))
+
             image_path = images_dir / file_name
             if not image_path.exists():
                 image_path = input_dir / file_name
             images.append(
                 ImageInfo(
-                    image_id=str(image["id"]),
+                    image_id=image_id,
                     file_name=file_name,
-                    width=int(image["width"]),
-                    height=int(image["height"]),
+                    width=width,
+                    height=height,
                     path=image_path,
                 ),
             )
+            image_id_set.add(image_id)
 
         annotations: list[Annotation] = []
         for annotation in data.get("annotations", []):
-            category_id = category_map[int(annotation["category_id"])]
-            bbox = annotation["bbox"]
+            try:
+                annotation_category_id = int(annotation["category_id"])
+                annotation_image_id = str(annotation["image_id"])
+                bbox = annotation["bbox"]
+            except (KeyError, ValueError, TypeError) as e:
+                raise InvalidCocoJsonError(json_path, ValueError(f"Invalid annotation data: {e}")) from e
+
+            # Validate category_id exists in category_map
+            if annotation_category_id not in category_map:
+                available_ids = list(category_map.keys())
+                raise InvalidCocoCategoryIdError(annotation_category_id, available_ids)
+            category_id = category_map[annotation_category_id]
+
+            # Validate image_id exists
+            if annotation_image_id not in image_id_set:
+                raise InvalidCocoImageIdError(annotation_image_id, image_id_set)
+
+            # Validate bbox
+            if not isinstance(bbox, list) or len(bbox) != 4:
+                raise InvalidCocoBboxError(bbox)
+
+            try:
+                bbox_x = float(bbox[0])
+                bbox_y = float(bbox[1])
+                bbox_w = float(bbox[2])
+                bbox_h = float(bbox[3])
+            except (ValueError, TypeError) as e:
+                raise InvalidCocoBboxError(bbox) from e
+
+            # Find corresponding image for size validation
+            image_info = next((img for img in images if img.image_id == annotation_image_id), None)
+            if image_info:
+                if bbox_w <= 0 or bbox_h <= 0:
+                    raise InvalidCocoBboxError(bbox, (image_info.width, image_info.height))
+                # Check if bbox is within image bounds (with small tolerance for floating point)
+                if (
+                    bbox_x < -0.5
+                    or bbox_y < -0.5
+                    or (bbox_x + bbox_w) > image_info.width + 0.5
+                    or (bbox_y + bbox_h) > image_info.height + 0.5
+                ):
+                    raise InvalidCocoBboxError(bbox, (image_info.width, image_info.height))
+
             annotations.append(
                 Annotation(
-                    image_id=str(annotation["image_id"]),
+                    image_id=annotation_image_id,
                     category_id=category_id,
-                    bbox=(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
+                    bbox=(bbox_x, bbox_y, bbox_w, bbox_h),
                 ),
             )
 
         return Split(name=split_name, images=images, annotations=annotations)
 
+    @override
     def read(
         self,
         params: CocoDetectedParams,  # type: ignore[override]
@@ -309,6 +420,7 @@ class CocoConverter(FormatConverter):
 
         return Dataset(splits=splits_dict, class_names=class_names)
 
+    @override
     def write(
         self,
         output_dir: Path,
@@ -364,6 +476,8 @@ class CocoConverter(FormatConverter):
             coco_annotations: list[dict[str, Any]] = []
             annotation_id = 1
             for annotation in split.annotations:
+                if annotation.image_id not in image_id_map:
+                    raise InvalidCocoImageIdError(annotation.image_id, list(image_id_map.keys()))
                 coco_annotations.append(
                     {
                         "id": annotation_id,
