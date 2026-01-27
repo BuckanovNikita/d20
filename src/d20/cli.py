@@ -12,6 +12,7 @@ from typing_extensions import assert_never
 from d20.convert import ConversionRequest, convert_dataset
 from d20.formats import get_converter
 from d20.reporting import export_fiftyone
+
 from d20.types import (
     CocoDetectedParams,
     CocoWriteDetectedParams,

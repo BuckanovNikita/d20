@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-
 class _NormalizeOptions(TypedDict, total=False):
     """Options for normalizing input path."""
 

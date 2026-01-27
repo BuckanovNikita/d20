@@ -308,7 +308,7 @@ class CocoConverter(FormatConverter):
 
             # Validate image_id exists
             if annotation_image_id not in image_id_set:
-                raise InvalidCocoImageIdError(annotation_image_id, image_id_set)
+                raise InvalidCocoImageIdError(annotation_image_id, list(image_id_set))
 
             # Validate bbox
             if not isinstance(bbox, list) or len(bbox) != 4:
