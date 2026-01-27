@@ -52,11 +52,6 @@ def convert_dataset(request: ConversionRequest) -> None:
         request: ConversionRequest with all conversion parameters
 
     """
-    _convert_dataset_impl(request)
-
-
-def _convert_dataset_impl(request: ConversionRequest) -> None:
-    """Implement dataset conversion."""
     try:
         reader = get_converter(request.input_format)
     except FormatNotRegisteredError as e:

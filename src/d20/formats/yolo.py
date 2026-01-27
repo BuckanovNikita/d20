@@ -4,14 +4,19 @@ from __future__ import annotations
 
 from pathlib import Path
 from shutil import copy2
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import Any, TypedDict
 
 import yaml
 from loguru import logger
-from PIL import Image
 from typing_extensions import Unpack, override
 
 from d20.formats.base import FormatConverter, register_converter
+from d20.formats.utils import (
+    group_annotations_by_image,
+    iter_image_files,
+    read_image_info,
+    resolve_split_dir,
+)
 from d20.types import (
     Annotation,
     Dataset,
@@ -20,9 +25,6 @@ from d20.types import (
     YoloDetectedParams,
     YoloWriteDetectedParams,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
 
 
 class _NormalizeOptions(TypedDict, total=False):
@@ -113,50 +115,60 @@ class InvalidYoloBboxError(ValueError):
         self.image_size = image_size
 
 
-IMAGE_EXTS = {
-    ".avif",
-    ".bmp",
-    ".dng",
-    ".heic",
-    ".jpeg",
-    ".jpg",
-    ".jp2",
-    ".mpo",
-    ".png",
-    ".tif",
-    ".tiff",
-    ".webp",
-}
+class YoloAnnotationValidator:
+    """Validates YOLO annotation values."""
 
+    @staticmethod
+    def validate_class_id(class_id: int, num_classes: int) -> None:
+        """Validate class ID is within valid range.
 
-def _iter_images(images_dir: Path) -> list[Path]:
-    return sorted([path for path in images_dir.rglob("*") if path.is_file() and path.suffix.lower() in IMAGE_EXTS])
+        Args:
+            class_id: Class ID to validate
+            num_classes: Number of available classes
 
+        Raises:
+            UnknownClassIdError: If class_id is out of range
 
-def _resolve_split_dir(base_dir: Path, split: str) -> Path:
-    split_dir = base_dir / split
-    return split_dir if split_dir.exists() else base_dir
+        """
+        if class_id < 0 or class_id >= num_classes:
+            raise UnknownClassIdError(class_id)
 
+    @staticmethod
+    def validate_coordinate(name: str, value: float) -> None:
+        """Validate coordinate is in [0, 1] range.
 
-def _read_image_info(image_path: Path, images_dir: Path) -> ImageInfo:
-    relative = image_path.relative_to(images_dir)
-    with Image.open(image_path) as image:
-        width, height = image.size
+        Args:
+            name: Name of the coordinate (for error message)
+            value: Coordinate value to validate
 
-    return ImageInfo(
-        image_id=image_path.stem,
-        file_name=relative.as_posix(),
-        width=width,
-        height=height,
-        path=image_path,
-    )
+        Raises:
+            InvalidYoloCoordinateError: If coordinate is out of range
 
+        """
+        if not (0.0 <= value <= 1.0):
+            raise InvalidYoloCoordinateError(name, value)
 
-def _group_annotations(annotations: Iterable[Annotation]) -> dict[str, list[Annotation]]:
-    grouped: dict[str, list[Annotation]] = {}
-    for annotation in annotations:
-        grouped.setdefault(annotation.image_id, []).append(annotation)
-    return grouped
+    @staticmethod
+    def validate_bbox(bbox: tuple[float, float, float, float], image_size: tuple[int, int]) -> None:
+        """Validate bounding box is valid.
+
+        Args:
+            bbox: Bounding box (x, y, width, height)
+            image_size: Image size (width, height)
+
+        Raises:
+            InvalidYoloBboxError: If bbox is invalid
+
+        """
+        x, y, w, h = bbox
+        img_w, img_h = image_size
+
+        if w <= 0 or h <= 0:
+            raise InvalidYoloBboxError(bbox, image_size)
+
+        # Check if bbox is within image bounds (with small tolerance for floating point)
+        if x < -0.5 or y < -0.5 or (x + w) > img_w + 0.5 or (y + h) > img_h + 0.5:
+            raise InvalidYoloBboxError(bbox, image_size)
 
 
 def yaml_safe_dump(data: dict[str, Any]) -> str:
@@ -315,6 +327,94 @@ class YoloConverter(FormatConverter):
 
         return input_dir, class_names, splits
 
+    def _split_annotation_line(self, line: str) -> list[str] | None:
+        """Split and validate annotation line format.
+
+        Args:
+            line: Line from label file
+
+        Returns:
+            List of parts if valid, None otherwise
+
+        """
+        stripped = line.strip()
+        if not stripped:
+            return None
+
+        parts = stripped.split()
+        if len(parts) != 5:
+            logger.warning(f"Skipping invalid YOLO label line: {line}")
+            return None
+
+        return parts
+
+    def _extract_class_id(self, line: str, parts: list[str]) -> int:
+        """Extract and validate class ID from line parts.
+
+        Args:
+            line: Original line (for error messages)
+            parts: Split line parts
+
+        Returns:
+            Class ID
+
+        Raises:
+            InvalidYoloNumericValueError: If conversion fails
+
+        """
+        try:
+            return int(parts[0])
+        except ValueError as e:
+            raise InvalidYoloNumericValueError(line, "class_id", parts[0], e) from e
+
+    def _extract_coordinates(self, line: str, parts: list[str]) -> tuple[float, float, float, float]:
+        """Extract and validate coordinates from line parts.
+
+        Args:
+            line: Original line (for error messages)
+            parts: Split line parts
+
+        Returns:
+            Tuple of (x_center, y_center, width, height)
+
+        Raises:
+            InvalidYoloNumericValueError: If conversion fails
+
+        """
+        coord_names = ["x_center", "y_center", "width", "height"]
+        coords: list[float] = []
+        for i, name in enumerate(coord_names, start=1):
+            part_value = parts[i]
+            try:
+                coord_value = float(part_value)
+            except ValueError as e:
+                raise InvalidYoloNumericValueError(line, name, part_value, e) from e
+            coords.append(coord_value)
+        return (coords[0], coords[1], coords[2], coords[3])
+
+    def _convert_yolo_to_absolute(
+        self,
+        coords: tuple[float, float, float, float],
+        image: ImageInfo,
+    ) -> tuple[float, float, float, float]:
+        """Convert normalized YOLO coordinates to absolute bbox.
+
+        Args:
+            coords: Normalized coordinates (x_center, y_center, width, height)
+            image: ImageInfo for the image
+
+        Returns:
+            Absolute bbox (x, y, width, height)
+
+        """
+        x_center, y_center, width, height = coords
+        return (
+            (x_center - width / 2.0) * image.width,
+            (y_center - height / 2.0) * image.height,
+            width * image.width,
+            height * image.height,
+        )
+
     def _parse_yolo_annotation_line(
         self,
         line: str,
@@ -338,80 +438,27 @@ class YoloConverter(FormatConverter):
             InvalidYoloBboxError: If calculated bbox is invalid
 
         """
-        stripped = line.strip()
-        if not stripped:
+        parts = self._split_annotation_line(line)
+        if not parts:
             return None
 
-        parts = stripped.split()
-        if len(parts) != 5:
-            logger.warning(f"Skipping invalid YOLO label line: {line}")
-            return None
+        # Extract and validate class_id
+        class_id = self._extract_class_id(line, parts)
+        YoloAnnotationValidator.validate_class_id(class_id, len(class_names))
 
-        # Validate and convert class_id
-        try:
-            class_id = int(parts[0])
-        except ValueError as e:
-            raise InvalidYoloNumericValueError(line, "class_id", parts[0], e) from e
+        # Extract and validate coordinates
+        coords = self._extract_coordinates(line, parts)
+        for name, value in zip(["x_center", "y_center", "width", "height"], coords, strict=True):
+            YoloAnnotationValidator.validate_coordinate(name, value)
 
-        if class_id < 0:
-            raise UnknownClassIdError(class_id)
-        if class_id >= len(class_names):
-            raise UnknownClassIdError(class_id)
-
-        # Validate and convert coordinates
-        try:
-            x_center = float(parts[1])
-        except ValueError as e:
-            raise InvalidYoloNumericValueError(line, "x_center", parts[1], e) from e
-
-        try:
-            y_center = float(parts[2])
-        except ValueError as e:
-            raise InvalidYoloNumericValueError(line, "y_center", parts[2], e) from e
-
-        try:
-            width = float(parts[3])
-        except ValueError as e:
-            raise InvalidYoloNumericValueError(line, "width", parts[3], e) from e
-
-        try:
-            height = float(parts[4])
-        except ValueError as e:
-            raise InvalidYoloNumericValueError(line, "height", parts[4], e) from e
-
-        # Validate coordinate ranges [0, 1]
-        if not (0.0 <= x_center <= 1.0):
-            raise InvalidYoloCoordinateError("x_center", x_center)
-        if not (0.0 <= y_center <= 1.0):
-            raise InvalidYoloCoordinateError("y_center", y_center)
-        if not (0.0 <= width <= 1.0):
-            raise InvalidYoloCoordinateError("width", width)
-        if not (0.0 <= height <= 1.0):
-            raise InvalidYoloCoordinateError("height", height)
-
-        # Calculate bounding box
-        bbox_x = (x_center - width / 2.0) * image.width
-        bbox_y = (y_center - height / 2.0) * image.height
-        bbox_w = width * image.width
-        bbox_h = height * image.height
-
-        # Validate calculated bbox
-        if bbox_w <= 0 or bbox_h <= 0:
-            raise InvalidYoloBboxError((bbox_x, bbox_y, bbox_w, bbox_h), (image.width, image.height))
-
-        # Check if bbox is within image bounds (with small tolerance for floating point)
-        if (
-            bbox_x < -0.5
-            or bbox_y < -0.5
-            or (bbox_x + bbox_w) > image.width + 0.5
-            or (bbox_y + bbox_h) > image.height + 0.5
-        ):
-            raise InvalidYoloBboxError((bbox_x, bbox_y, bbox_w, bbox_h), (image.width, image.height))
+        # Convert to absolute bbox
+        bbox = self._convert_yolo_to_absolute(coords, image)
+        YoloAnnotationValidator.validate_bbox(bbox, (image.width, image.height))
 
         return Annotation(
             image_id=image.image_id,
             category_id=class_id,
-            bbox=(bbox_x, bbox_y, bbox_w, bbox_h),
+            bbox=bbox,
         )
 
     def _read_split(
@@ -435,14 +482,14 @@ class YoloConverter(FormatConverter):
             Split object with images and annotations
 
         """
-        images_dir = _resolve_split_dir(input_dir / images_dir_name, split_name)
-        labels_dir = _resolve_split_dir(input_dir / labels_dir_name, split_name)
+        images_dir = resolve_split_dir(input_dir / images_dir_name, split_name)
+        labels_dir = resolve_split_dir(input_dir / labels_dir_name, split_name)
 
         if not images_dir.exists():
             logger.warning(f"YOLO images directory missing: {images_dir}")
             return Split(name=split_name, images=[], annotations=[])
 
-        images = [_read_image_info(path, images_dir) for path in _iter_images(images_dir)]
+        images = [read_image_info(path, images_dir) for path in iter_image_files(images_dir)]
         annotations: list[Annotation] = []
 
         for image in images:
@@ -590,7 +637,7 @@ class YoloConverter(FormatConverter):
             images_dir.mkdir(parents=True, exist_ok=True)
             labels_dir.mkdir(parents=True, exist_ok=True)
 
-            grouped = _group_annotations(split.annotations)
+            grouped = group_annotations_by_image(split.annotations)
             for image in split.images:
                 relative = Path(image.file_name)
                 target_image_path = images_dir / relative

@@ -7,12 +7,10 @@ import sys
 from pathlib import Path
 
 from loguru import logger
-from typing_extensions import assert_never
 
 from d20.convert import ConversionRequest, convert_dataset
 from d20.formats import get_converter
 from d20.reporting import export_fiftyone
-
 from d20.types import (
     CocoDetectedParams,
     CocoWriteDetectedParams,
@@ -87,75 +85,6 @@ def _get_arg_value(args: argparse.Namespace, attr: str, default: str | None = No
     return default
 
 
-def _update_yolo_params(
-    params: YoloDetectedParams,
-    args: argparse.Namespace,
-    class_names: list[str] | None = None,
-    splits: list[str] | None = None,
-) -> YoloDetectedParams:
-    """Update YoloDetectedParams with CLI arguments."""
-    return YoloDetectedParams(
-        input_path=params.input_path,
-        class_names=class_names if class_names is not None else params.class_names,
-        splits=splits if splits is not None else params.splits,
-        images_dir=_get_arg_value(args, "images_dir") or params.images_dir,
-        labels_dir=_get_arg_value(args, "labels_dir") or params.labels_dir,
-        annotations_dir=_get_arg_value(args, "annotations_dir") or params.annotations_dir,
-        yaml_path=params.yaml_path,
-        dataset_root=params.dataset_root,
-    )
-
-
-def _update_coco_params(
-    params: CocoDetectedParams,
-    args: argparse.Namespace,
-    class_names: list[str] | None = None,
-    splits: list[str] | None = None,
-) -> CocoDetectedParams:
-    """Update CocoDetectedParams with CLI arguments."""
-    split_files = params.split_files
-    input_path = params.input_path
-
-    # Handle COCO single JSON file case
-    if (
-        hasattr(args, "images_path")
-        and args.images_path
-        and isinstance(params.input_path, Path)
-        and params.input_path.is_file()
-    ):
-        images_path = Path(args.images_path)
-        split_files = {params.input_path.stem: params.input_path}
-        input_path = images_path if images_path.is_dir() else images_path.parent
-
-    return CocoDetectedParams(
-        input_path=input_path,
-        class_names=class_names if class_names is not None else params.class_names,
-        splits=splits if splits is not None else params.splits,
-        images_dir=_get_arg_value(args, "images_dir") or params.images_dir,
-        labels_dir=_get_arg_value(args, "labels_dir") or params.labels_dir,
-        annotations_dir=_get_arg_value(args, "annotations_dir") or params.annotations_dir,
-        split_files=split_files,
-    )
-
-
-def _update_voc_params(
-    params: VocDetectedParams,
-    args: argparse.Namespace,
-    class_names: list[str] | None = None,
-    splits: list[str] | None = None,
-) -> VocDetectedParams:
-    """Update VocDetectedParams with CLI arguments."""
-    return VocDetectedParams(
-        input_path=params.input_path,
-        class_names=class_names if class_names is not None else params.class_names,
-        splits=splits if splits is not None else params.splits,
-        images_dir=_get_arg_value(args, "images_dir") or params.images_dir,
-        labels_dir=_get_arg_value(args, "labels_dir") or params.labels_dir,
-        annotations_dir=_get_arg_value(args, "annotations_dir") or params.annotations_dir,
-        auto_detect_splits=params.auto_detect_splits,
-    )
-
-
 def _update_detected_params_with_cli(
     params: YoloDetectedParams | CocoDetectedParams | VocDetectedParams,
     args: argparse.Namespace,
@@ -170,8 +99,12 @@ def _update_detected_params_with_cli(
         Updated DetectedParams
 
     """
+    # Collect overrides from CLI arguments
     class_names: list[str] | None = None
     splits: list[str] | None = None
+    images_dir: str | None = None
+    labels_dir: str | None = None
+    annotations_dir: str | None = None
 
     # Override class names if provided
     if hasattr(args, "class_names_file") and args.class_names_file:
@@ -181,15 +114,44 @@ def _update_detected_params_with_cli(
     if hasattr(args, "splits") and args.splits:
         splits = _parse_list(args.splits)
 
-    # Update params based on type
-    if isinstance(params, YoloDetectedParams):
-        return _update_yolo_params(params, args, class_names, splits)
-    if isinstance(params, CocoDetectedParams):
-        return _update_coco_params(params, args, class_names, splits)
-    if isinstance(params, VocDetectedParams):
-        return _update_voc_params(params, args, class_names, splits)
+    # Override directory names if provided
+    if hasattr(args, "images_dir") and args.images_dir:
+        images_dir = args.images_dir
+    if hasattr(args, "labels_dir") and args.labels_dir:
+        labels_dir = args.labels_dir
+    if hasattr(args, "annotations_dir") and args.annotations_dir:
+        annotations_dir = args.annotations_dir
 
-    assert_never(params)
+    # Handle COCO special case: single JSON file with images_path
+    if (
+        isinstance(params, CocoDetectedParams)
+        and hasattr(args, "images_path")
+        and args.images_path
+        and isinstance(params.input_path, Path)
+        and params.input_path.is_file()
+    ):
+        images_path = Path(args.images_path)
+        split_files = {params.input_path.stem: params.input_path}
+        input_path = images_path if images_path.is_dir() else images_path.parent
+        # Create new CocoDetectedParams with updated input_path and split_files
+        return CocoDetectedParams(
+            input_path=input_path,
+            class_names=class_names if class_names is not None else params.class_names,
+            splits=splits if splits is not None else params.splits,
+            images_dir=images_dir if images_dir is not None else params.images_dir,
+            labels_dir=labels_dir if labels_dir is not None else params.labels_dir,
+            annotations_dir=annotations_dir if annotations_dir is not None else params.annotations_dir,
+            split_files=split_files,
+        )
+
+    # Use with_overrides for all formats
+    return params.with_overrides(
+        class_names=class_names,
+        splits=splits,
+        images_dir=images_dir,
+        labels_dir=labels_dir,
+        annotations_dir=annotations_dir,
+    )
 
 
 def _build_write_params(
@@ -212,22 +174,18 @@ def _build_write_params(
         msg = "Class names are required for writing datasets"
         raise ValueError(msg)
 
+    # Extract common parameters with CLI overrides
     class_names = detected_params.class_names
     splits = detected_params.splits
-    images_dir = detected_params.images_dir or "images"
-    labels_dir = detected_params.labels_dir or "labels"
-    annotations_dir = detected_params.annotations_dir or "annotations"
+    images_dir = _get_arg_value(args, "images_dir") or detected_params.images_dir or "images"
+    labels_dir = _get_arg_value(args, "labels_dir") or detected_params.labels_dir or "labels"
+    annotations_dir = _get_arg_value(args, "annotations_dir") or detected_params.annotations_dir or "annotations"
 
-    # Override with CLI args if provided
-    if hasattr(args, "images_dir") and args.images_dir:
-        images_dir = args.images_dir
-    if hasattr(args, "labels_dir") and args.labels_dir:
-        labels_dir = args.labels_dir
-    if hasattr(args, "annotations_dir") and args.annotations_dir:
-        annotations_dir = args.annotations_dir
+    # Override splits if provided
     if hasattr(args, "splits") and args.splits:
         splits = _parse_list(args.splits)
 
+    # Factory pattern for creating WriteDetectedParams
     if format_name == "yolo":
         return YoloWriteDetectedParams(
             class_names=class_names,
@@ -273,14 +231,7 @@ def _ensure_class_names(
         raise ValueError(msg)
 
     class_names = _load_class_names_from_txt(Path(args.class_names_file))
-    if isinstance(params, YoloDetectedParams):
-        return _update_yolo_params(params, args, class_names=class_names)
-    if isinstance(params, CocoDetectedParams):
-        return _update_coco_params(params, args, class_names=class_names)
-    if isinstance(params, VocDetectedParams):
-        return _update_voc_params(params, args, class_names=class_names)
-
-    assert_never(params)
+    return params.with_overrides(class_names=class_names)
 
 
 def _handle_convert_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:

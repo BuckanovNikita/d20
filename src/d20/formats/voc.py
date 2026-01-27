@@ -13,6 +13,7 @@ from PIL import Image
 from typing_extensions import override
 
 from d20.formats.base import FormatConverter, register_converter
+from d20.formats.utils import group_annotations_by_image
 from d20.types import (
     Annotation,
     Dataset,
@@ -97,13 +98,6 @@ def _read_image_size(image_path: Path) -> tuple[int, int]:
     with Image.open(image_path) as image:
         width, height = image.size
     return width, height
-
-
-def _group_annotations(annotations: list[Annotation]) -> dict[str, list[Annotation]]:
-    grouped: dict[str, list[Annotation]] = {}
-    for annotation in annotations:
-        grouped.setdefault(annotation.image_id, []).append(annotation)
-    return grouped
 
 
 def _create_annotation_xml(
@@ -289,6 +283,56 @@ class VocConverter(FormatConverter):
             path=image_path,
         )
 
+    def _parse_bbox_coordinates(
+        self,
+        bbox: Element,
+    ) -> tuple[int, int, int, int]:
+        """Parse and validate bounding box coordinates from VOC XML.
+
+        Args:
+            bbox: XML bndbox element
+
+        Returns:
+            Tuple of (xmin, ymin, xmax, ymax)
+
+        Raises:
+            InvalidVocNumericValueError: If coordinate conversion fails
+            InvalidVocBboxError: If bbox coordinates are invalid
+
+        """
+        xmin_str = bbox.findtext("xmin", "1")
+        ymin_str = bbox.findtext("ymin", "1")
+        xmax_str = bbox.findtext("xmax", "1")
+        ymax_str = bbox.findtext("ymax", "1")
+
+        try:
+            xmin = int(xmin_str) - 1
+        except ValueError as e:
+            raise InvalidVocNumericValueError("xmin", xmin_str, e) from e
+
+        try:
+            ymin = int(ymin_str) - 1
+        except ValueError as e:
+            raise InvalidVocNumericValueError("ymin", ymin_str, e) from e
+
+        try:
+            xmax = int(xmax_str)
+        except ValueError as e:
+            raise InvalidVocNumericValueError("xmax", xmax_str, e) from e
+
+        try:
+            ymax = int(ymax_str)
+        except ValueError as e:
+            raise InvalidVocNumericValueError("ymax", ymax_str, e) from e
+
+        # Validate bbox coordinates
+        if xmin < 0 or ymin < 0:
+            raise InvalidVocBboxError((xmin, ymin, xmax, ymax))
+        if xmin >= xmax or ymin >= ymax:
+            raise InvalidVocBboxError((xmin, ymin, xmax, ymax))
+
+        return (xmin, ymin, xmax, ymax)
+
     def _parse_annotations_from_xml(
         self,
         root: Element,
@@ -323,37 +367,7 @@ class VocConverter(FormatConverter):
                 logger.warning(f"Missing 'bndbox' element in VOC object for image {image_id}, skipping")
                 continue
 
-            # Validate and convert coordinates
-            xmin_str = bbox.findtext("xmin", "1")
-            ymin_str = bbox.findtext("ymin", "1")
-            xmax_str = bbox.findtext("xmax", "1")
-            ymax_str = bbox.findtext("ymax", "1")
-
-            try:
-                xmin = int(xmin_str) - 1
-            except ValueError as e:
-                raise InvalidVocNumericValueError("xmin", xmin_str, e) from e
-
-            try:
-                ymin = int(ymin_str) - 1
-            except ValueError as e:
-                raise InvalidVocNumericValueError("ymin", ymin_str, e) from e
-
-            try:
-                xmax = int(xmax_str)
-            except ValueError as e:
-                raise InvalidVocNumericValueError("xmax", xmax_str, e) from e
-
-            try:
-                ymax = int(ymax_str)
-            except ValueError as e:
-                raise InvalidVocNumericValueError("ymax", ymax_str, e) from e
-
-            # Validate bbox coordinates
-            if xmin < 0 or ymin < 0:
-                raise InvalidVocBboxError((xmin, ymin, xmax, ymax))
-            if xmin >= xmax or ymin >= ymax:
-                raise InvalidVocBboxError((xmin, ymin, xmax, ymax))
+            xmin, ymin, xmax, ymax = self._parse_bbox_coordinates(bbox)
 
             annotations.append(
                 Annotation(
@@ -484,7 +498,7 @@ class VocConverter(FormatConverter):
                 continue
 
             split = dataset.splits[split_name]
-            grouped = _group_annotations(split.annotations)
+            grouped = group_annotations_by_image(split.annotations)
             split_ids: list[str] = []
 
             for image in split.images:

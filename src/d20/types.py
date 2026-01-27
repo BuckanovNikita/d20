@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -104,6 +105,29 @@ class DetectedParams(Protocol):
     labels_dir: str | None
     annotations_dir: str | None
 
+    def with_overrides(
+        self,
+        class_names: list[str] | None = None,
+        splits: list[str] | None = None,
+        images_dir: str | None = None,
+        labels_dir: str | None = None,
+        annotations_dir: str | None = None,
+    ) -> DetectedParams:
+        """Return new instance with overridden values.
+
+        Args:
+            class_names: Override class names
+            splits: Override splits
+            images_dir: Override images directory
+            labels_dir: Override labels directory
+            annotations_dir: Override annotations directory
+
+        Returns:
+            New DetectedParams instance with overridden values
+
+        """
+        ...
+
 
 # Format-specific implementations
 @dataclass
@@ -119,6 +143,24 @@ class YoloDetectedParams:
     yaml_path: Path | None = None  # Format-specific: path to data.yaml
     dataset_root: Path | None = None  # Format-specific: root from YAML
 
+    def with_overrides(
+        self,
+        class_names: list[str] | None = None,
+        splits: list[str] | None = None,
+        images_dir: str | None = None,
+        labels_dir: str | None = None,
+        annotations_dir: str | None = None,
+    ) -> YoloDetectedParams:
+        """Return new instance with overridden values."""
+        return dataclasses.replace(
+            self,
+            class_names=class_names if class_names is not None else self.class_names,
+            splits=splits if splits is not None else self.splits,
+            images_dir=images_dir if images_dir is not None else self.images_dir,
+            labels_dir=labels_dir if labels_dir is not None else self.labels_dir,
+            annotations_dir=annotations_dir if annotations_dir is not None else self.annotations_dir,
+        )
+
 
 @dataclass
 class CocoDetectedParams:
@@ -132,6 +174,24 @@ class CocoDetectedParams:
     annotations_dir: str | None = None
     split_files: dict[str, Path] | None = None  # Format-specific: explicit split files
 
+    def with_overrides(
+        self,
+        class_names: list[str] | None = None,
+        splits: list[str] | None = None,
+        images_dir: str | None = None,
+        labels_dir: str | None = None,
+        annotations_dir: str | None = None,
+    ) -> CocoDetectedParams:
+        """Return new instance with overridden values."""
+        return dataclasses.replace(
+            self,
+            class_names=class_names if class_names is not None else self.class_names,
+            splits=splits if splits is not None else self.splits,
+            images_dir=images_dir if images_dir is not None else self.images_dir,
+            labels_dir=labels_dir if labels_dir is not None else self.labels_dir,
+            annotations_dir=annotations_dir if annotations_dir is not None else self.annotations_dir,
+        )
+
 
 @dataclass
 class VocDetectedParams:
@@ -144,6 +204,24 @@ class VocDetectedParams:
     labels_dir: str | None = None
     annotations_dir: str | None = None
     auto_detect_splits: bool = False  # Format-specific: auto-detect from ImageSets/Main
+
+    def with_overrides(
+        self,
+        class_names: list[str] | None = None,
+        splits: list[str] | None = None,
+        images_dir: str | None = None,
+        labels_dir: str | None = None,
+        annotations_dir: str | None = None,
+    ) -> VocDetectedParams:
+        """Return new instance with overridden values."""
+        return dataclasses.replace(
+            self,
+            class_names=class_names if class_names is not None else self.class_names,
+            splits=splits if splits is not None else self.splits,
+            images_dir=images_dir if images_dir is not None else self.images_dir,
+            labels_dir=labels_dir if labels_dir is not None else self.labels_dir,
+            annotations_dir=annotations_dir if annotations_dir is not None else self.annotations_dir,
+        )
 
 
 # Base protocol/interface for write parameters

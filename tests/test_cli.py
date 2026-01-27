@@ -17,10 +17,7 @@ from d20.cli import (
     _handle_export_command,
     _load_class_names_from_txt,
     _parse_list,
-    _update_coco_params,
     _update_detected_params_with_cli,
-    _update_voc_params,
-    _update_yolo_params,
     main,
 )
 from d20.types import (
@@ -127,7 +124,7 @@ def test_get_arg_value_empty_string() -> None:
 
 
 def test_update_yolo_params(tmp_path: Path) -> None:
-    """Test _update_yolo_params() updates parameters."""
+    """Test _update_detected_params_with_cli() updates YOLO parameters."""
     params = YoloDetectedParams(
         input_path=tmp_path,
         class_names=["cat"],
@@ -140,7 +137,8 @@ def test_update_yolo_params(tmp_path: Path) -> None:
     )
     args = argparse.Namespace(images_dir="imgs", labels_dir="lbls", annotations_dir="anns")
 
-    updated = _update_yolo_params(params, args)
+    updated = _update_detected_params_with_cli(params, args)
+    assert isinstance(updated, YoloDetectedParams)
     assert updated.images_dir == "imgs"
     assert updated.labels_dir == "lbls"
     assert updated.annotations_dir == "anns"
@@ -149,7 +147,7 @@ def test_update_yolo_params(tmp_path: Path) -> None:
 
 
 def test_update_yolo_params_with_class_names(tmp_path: Path) -> None:
-    """Test _update_yolo_params() with class names override."""
+    """Test _update_detected_params_with_cli() with class names override."""
     params = YoloDetectedParams(
         input_path=tmp_path,
         class_names=["cat"],
@@ -157,14 +155,17 @@ def test_update_yolo_params_with_class_names(tmp_path: Path) -> None:
         images_dir="images",
         labels_dir="labels",
     )
-    args = argparse.Namespace()
+    class_file = tmp_path / "classes.txt"
+    class_file.write_text("dog\nbird")
+    args = argparse.Namespace(class_names_file=str(class_file))
 
-    updated = _update_yolo_params(params, args, class_names=["dog", "bird"])
+    updated = _update_detected_params_with_cli(params, args)
+    assert isinstance(updated, YoloDetectedParams)
     assert updated.class_names == ["dog", "bird"]
 
 
 def test_update_coco_params(tmp_path: Path) -> None:
-    """Test _update_coco_params() updates parameters."""
+    """Test _update_detected_params_with_cli() updates COCO parameters."""
     params = CocoDetectedParams(
         input_path=tmp_path,
         class_names=["cat"],
@@ -176,14 +177,15 @@ def test_update_coco_params(tmp_path: Path) -> None:
     )
     args = argparse.Namespace(images_dir="imgs", labels_dir="lbls", annotations_dir="anns")
 
-    updated = _update_coco_params(params, args)
+    updated = _update_detected_params_with_cli(params, args)
+    assert isinstance(updated, CocoDetectedParams)
     assert updated.images_dir == "imgs"
     assert updated.labels_dir == "lbls"
     assert updated.annotations_dir == "anns"
 
 
 def test_update_coco_params_with_images_path(tmp_path: Path) -> None:
-    """Test _update_coco_params() with images_path for single JSON file."""
+    """Test _update_detected_params_with_cli() with images_path for single JSON file."""
     json_file = tmp_path / "annotations.json"
     json_file.write_text("{}")
 
@@ -201,13 +203,14 @@ def test_update_coco_params_with_images_path(tmp_path: Path) -> None:
 
     args = argparse.Namespace(images_path=str(images_dir))
 
-    updated = _update_coco_params(params, args)
+    updated = _update_detected_params_with_cli(params, args)
+    assert isinstance(updated, CocoDetectedParams)
     assert updated.split_files is not None
     assert "annotations" in updated.split_files
 
 
 def test_update_voc_params(tmp_path: Path) -> None:
-    """Test _update_voc_params() updates parameters."""
+    """Test _update_detected_params_with_cli() updates VOC parameters."""
     params = VocDetectedParams(
         input_path=tmp_path,
         class_names=["cat"],
@@ -219,7 +222,8 @@ def test_update_voc_params(tmp_path: Path) -> None:
     )
     args = argparse.Namespace(images_dir="imgs", labels_dir="lbls", annotations_dir="anns")
 
-    updated = _update_voc_params(params, args)
+    updated = _update_detected_params_with_cli(params, args)
+    assert isinstance(updated, VocDetectedParams)
     assert updated.images_dir == "imgs"
     assert updated.labels_dir == "lbls"
     assert updated.annotations_dir == "anns"
@@ -237,19 +241,18 @@ def test_update_detected_params_with_cli_yolo(tmp_path: Path) -> None:
     )
 
     class_names_file = tmp_path / "classes.txt"
+    class_names_file.write_text("cat\ndog")
     args = argparse.Namespace(
         class_names_file=str(class_names_file),
         splits="train,val",
         images_dir="imgs",
     )
 
-    with patch("d20.cli._load_class_names_from_txt") as mock_load:
-        mock_load.return_value = ["cat", "dog"]
-        with patch("d20.cli._update_yolo_params") as mock_update:
-            mock_update.return_value = params
-            _update_detected_params_with_cli(params, args)
-            mock_load.assert_called_once_with(class_names_file)
-            mock_update.assert_called_once()
+    updated = _update_detected_params_with_cli(params, args)
+    assert isinstance(updated, YoloDetectedParams)
+    assert updated.class_names == ["cat", "dog"]
+    assert updated.splits == ["train", "val"]
+    assert updated.images_dir == "imgs"
 
 
 def test_build_write_params_yolo(tmp_path: Path) -> None:

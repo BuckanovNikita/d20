@@ -11,6 +11,7 @@ from loguru import logger
 from typing_extensions import override
 
 from d20.formats.base import FormatConverter, register_converter
+from d20.formats.utils import resolve_split_dir
 from d20.types import (
     Annotation,
     CocoDetectedParams,
@@ -93,11 +94,6 @@ class InvalidCocoBboxError(ValueError):
         super().__init__(msg)
         self.bbox = bbox
         self.image_size = image_size
-
-
-def _resolve_split_dir(base_dir: Path, split: str) -> Path:
-    split_dir = base_dir / split
-    return split_dir if split_dir.exists() else base_dir
 
 
 def _extract_categories_from_json_file(json_path: Path) -> tuple[set[str], dict[str, int]]:
@@ -222,37 +218,28 @@ class CocoConverter(FormatConverter):
             split_files=split_files,
         )
 
-    def _read_split_from_json(
+    def _build_category_map(
         self,
-        json_path: Path,
-        input_dir: Path,
+        categories: list[dict[str, Any]],
         class_names: list[str],
-        images_dir_name: str,
-        split_name: str,
-    ) -> Split:
-        """Read a single split from a COCO JSON file.
+        json_path: Path,
+    ) -> dict[int, int]:
+        """Build category ID mapping from COCO categories.
 
         Args:
-            json_path: Path to COCO JSON file
-            input_dir: Base input directory
+            categories: List of category dictionaries from JSON
             class_names: List of class names
-            images_dir_name: Name of images directory
-            split_name: Name of the split
+            json_path: Path to JSON file (for error context)
 
         Returns:
-            Dataset split
+            Dictionary mapping COCO category_id to class_names index
+
+        Raises:
+            COCOCategoryMissingNameError: If category missing name
+            UnknownClassNameError: If category name not in class_names
+            InvalidCocoJsonError: If JSON structure is invalid
 
         """
-        if not json_path.exists():
-            logger.warning(f"COCO labels file missing: {json_path}")
-            return Split(name=split_name, images=[], annotations=[])
-
-        try:
-            data = json.loads(json_path.read_text())
-        except (json.JSONDecodeError, OSError) as e:
-            raise InvalidCocoJsonError(json_path, e) from e
-
-        categories = data.get("categories", [])
         category_map: dict[int, int] = {}
         for category in categories:
             name = category.get("name")
@@ -260,12 +247,39 @@ class CocoConverter(FormatConverter):
                 raise COCOCategoryMissingNameError
             if name not in class_names:
                 raise UnknownClassNameError(name)
-            category_map[int(category["id"])] = class_names.index(name)
+            try:
+                cat_id = int(category["id"])
+            except (KeyError, ValueError, TypeError) as e:
+                raise InvalidCocoJsonError(json_path, ValueError(f"Invalid category data: {e}")) from e
+            category_map[cat_id] = class_names.index(name)
+        return category_map
 
-        images_dir = _resolve_split_dir(input_dir / images_dir_name, split_name)
+    def _parse_images(
+        self,
+        images_data: list[dict[str, Any]],
+        images_dir: Path,
+        input_dir: Path,
+        json_path: Path,
+    ) -> tuple[list[ImageInfo], set[str]]:
+        """Parse image information from COCO JSON data.
+
+        Args:
+            images_data: List of image dictionaries from JSON
+            images_dir: Directory containing images for this split
+            input_dir: Base input directory (fallback for image paths)
+            json_path: Path to JSON file (for error context)
+
+        Returns:
+            Tuple of (list of ImageInfo, set of image IDs)
+
+        Raises:
+            InvalidCocoJsonError: If image data is invalid
+            InvalidCocoBboxError: If image dimensions are invalid
+
+        """
         images: list[ImageInfo] = []
         image_id_set: set[str] = set()
-        for image in data.get("images", []):
+        for image in images_data:
             try:
                 file_name = image["file_name"]
                 image_id = str(image["id"])
@@ -290,9 +304,37 @@ class CocoConverter(FormatConverter):
                 ),
             )
             image_id_set.add(image_id)
+        return images, image_id_set
 
+    def _parse_annotations(
+        self,
+        annotations_data: list[dict[str, Any]],
+        category_map: dict[int, int],
+        image_id_set: set[str],
+        images: list[ImageInfo],
+        json_path: Path,
+    ) -> list[Annotation]:
+        """Parse annotations from COCO JSON data.
+
+        Args:
+            annotations_data: List of annotation dictionaries from JSON
+            category_map: Mapping from COCO category_id to class_names index
+            image_id_set: Set of valid image IDs
+            images: List of ImageInfo for validation
+            json_path: Path to JSON file (for error context)
+
+        Returns:
+            List of Annotation objects
+
+        Raises:
+            InvalidCocoJsonError: If annotation data is invalid
+            InvalidCocoCategoryIdError: If category_id is invalid
+            InvalidCocoImageIdError: If image_id is invalid
+            InvalidCocoBboxError: If bbox is invalid
+
+        """
         annotations: list[Annotation] = []
-        for annotation in data.get("annotations", []):
+        for annotation in annotations_data:
             try:
                 annotation_category_id = int(annotation["category_id"])
                 annotation_image_id = str(annotation["image_id"])
@@ -343,6 +385,51 @@ class CocoConverter(FormatConverter):
                     bbox=(bbox_x, bbox_y, bbox_w, bbox_h),
                 ),
             )
+        return annotations
+
+    def _read_split_from_json(
+        self,
+        json_path: Path,
+        input_dir: Path,
+        class_names: list[str],
+        images_dir_name: str,
+        split_name: str,
+    ) -> Split:
+        """Read a single split from a COCO JSON file.
+
+        Args:
+            json_path: Path to COCO JSON file
+            input_dir: Base input directory
+            class_names: List of class names
+            images_dir_name: Name of images directory
+            split_name: Name of the split
+
+        Returns:
+            Dataset split
+
+        """
+        if not json_path.exists():
+            logger.warning(f"COCO labels file missing: {json_path}")
+            return Split(name=split_name, images=[], annotations=[])
+
+        try:
+            data = json.loads(json_path.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            raise InvalidCocoJsonError(json_path, e) from e
+
+        categories = data.get("categories", [])
+        category_map = self._build_category_map(categories, class_names, json_path)
+
+        images_dir = resolve_split_dir(input_dir / images_dir_name, split_name)
+        images, image_id_set = self._parse_images(data.get("images", []), images_dir, input_dir, json_path)
+
+        annotations = self._parse_annotations(
+            data.get("annotations", []),
+            category_map,
+            image_id_set,
+            images,
+            json_path,
+        )
 
         return Split(name=split_name, images=images, annotations=annotations)
 
