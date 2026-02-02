@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**d20** - CLI tool and library for converting object detection datasets between COCO, YOLO, and PASCAL VOC formats.
+**d20** - CLI tool and library for converting object detection datasets between COCO and YOLO formats.
 
 ## Architecture
 
@@ -11,7 +11,6 @@
 - **Formats** (`src/d20/formats/`): Format converters implementing `BaseFormatConverter`
   - `yolo.py` - YOLO format (Ultralytics-style)
   - `coco.py` - COCO format
-  - `voc.py` - PASCAL VOC format
 
 - **Conversion Pipeline** (`src/d20/convert.py`):
   - `ConversionRequest` - conversion parameters
@@ -37,7 +36,7 @@ Input Format → autodetect() → DetectedParams → read() → Dataset → writ
 
 ### Implemented
 
-- ✅ Three-way conversion: COCO ↔ YOLO ↔ VOC
+- ✅ Two-way conversion: COCO ↔ YOLO
 - ✅ Autodetection of dataset structure (splits, directories, classes)
 - ✅ CLI with `convert` and `export` commands
 - ✅ FiftyOne integration for visualization

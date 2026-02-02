@@ -20,7 +20,7 @@ def _get_format_from_params(params: DetectedParams) -> str:
         params: DetectedParams instance
 
     Returns:
-        Format name (e.g., 'yolo', 'coco', 'voc')
+        Format name (e.g., 'yolo', 'coco')
 
     Raises:
         ValueError: If params doesn't implement get_format_name() method

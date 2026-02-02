@@ -16,12 +16,11 @@ from d20.types import (
     CocoWriteDetectedParams,
     DetectedParams,
     ExportOptions,
-    VocWriteDetectedParams,
     WriteDetectedParams,
     YoloWriteDetectedParams,
 )
 
-FORMATS = ("coco", "voc", "yolo")
+FORMATS = ("coco", "yolo")
 
 
 def _parse_list(value: str) -> list[str]:
@@ -47,8 +46,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # Convert command (explicit)
     convert_parser = subparsers.add_parser("convert", help="Convert dataset between formats")
-    convert_parser.add_argument("source_format", choices=FORMATS, help="Source format (coco, voc, yolo)")
-    convert_parser.add_argument("target_format", choices=FORMATS, help="Target format (coco, voc, yolo)")
+    convert_parser.add_argument("source_format", choices=FORMATS, help="Source format (coco, yolo)")
+    convert_parser.add_argument("target_format", choices=FORMATS, help="Target format (coco, yolo)")
     convert_parser.add_argument("--input", required=True, help="Input dataset path")
     convert_parser.add_argument("--output", required=True, help="Output directory path")
     convert_parser.add_argument("--class-names-file", help="Path to text file with class names (one per line)")
@@ -59,7 +58,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # Export command
     export_parser = subparsers.add_parser("export", help="Export dataset to FiftyOne App for visual inspection")
-    export_parser.add_argument("format", choices=FORMATS, help="Dataset format (coco, voc, yolo)")
+    export_parser.add_argument("format", choices=FORMATS, help="Dataset format (coco, yolo)")
     export_parser.add_argument("--input", required=True, help="Input dataset path")
     export_parser.add_argument("--class-names-file", help="Path to text file with class names (one per line)")
     export_parser.add_argument("--splits", help="Comma-separated split names (default: auto-detect)")
@@ -133,14 +132,6 @@ class WriteParamsFactory:
             )
         if format_name == "coco":
             return CocoWriteDetectedParams(
-                class_names=class_names,
-                splits=splits,
-                images_dir=images_dir,
-                labels_dir=labels_dir,
-                annotations_dir=annotations_dir,
-            )
-        if format_name == "voc":
-            return VocWriteDetectedParams(
                 class_names=class_names,
                 splits=splits,
                 images_dir=images_dir,

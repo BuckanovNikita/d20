@@ -23,8 +23,6 @@ from d20.cli import (
 from d20.types import (
     CocoDetectedParams,
     CocoWriteDetectedParams,
-    VocDetectedParams,
-    VocWriteDetectedParams,
     YoloDetectedParams,
     YoloWriteDetectedParams,
 )
@@ -209,27 +207,6 @@ def test_update_coco_params_with_images_path(tmp_path: Path) -> None:
     assert "annotations" in updated.split_files
 
 
-def test_update_voc_params(tmp_path: Path) -> None:
-    """Test _update_detected_params_with_cli() updates VOC parameters."""
-    params = VocDetectedParams(
-        input_path=tmp_path,
-        class_names=["cat"],
-        splits=["train"],
-        images_dir="JPEGImages",
-        labels_dir=None,
-        annotations_dir="Annotations",
-        auto_detect_splits=False,
-    )
-    args = argparse.Namespace(images_dir="imgs", labels_dir="lbls", annotations_dir="anns")
-
-    updated = _update_detected_params_with_cli(params, args)
-    assert isinstance(updated, VocDetectedParams)
-    assert updated.images_dir == "imgs"
-    assert updated.labels_dir == "lbls"
-    assert updated.annotations_dir == "anns"
-    assert updated.auto_detect_splits is False  # Unchanged
-
-
 def test_update_detected_params_with_cli_yolo(tmp_path: Path) -> None:
     """Test _update_detected_params_with_cli() with YOLO params."""
     params = YoloDetectedParams(
@@ -288,24 +265,6 @@ def test_build_write_params_coco(tmp_path: Path) -> None:
 
     write_params = _build_write_params("coco", params, args)
     assert isinstance(write_params, CocoWriteDetectedParams)
-    assert write_params.class_names == ["cat"]
-
-
-def test_build_write_params_voc(tmp_path: Path) -> None:
-    """Test _build_write_params() for VOC format."""
-    params = VocDetectedParams(
-        input_path=tmp_path,
-        class_names=["cat"],
-        splits=["train"],
-        images_dir="JPEGImages",
-        labels_dir=None,
-        annotations_dir="Annotations",
-        auto_detect_splits=False,
-    )
-    args = argparse.Namespace()
-
-    write_params = _build_write_params("voc", params, args)
-    assert isinstance(write_params, VocWriteDetectedParams)
     assert write_params.class_names == ["cat"]
 
 

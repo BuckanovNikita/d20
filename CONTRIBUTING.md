@@ -23,7 +23,6 @@ d20/
 │   │   ├── base.py   # Базовый класс конвертера
 │   │   ├── coco.py   # COCO конвертер
 │   │   ├── yolo.py   # YOLO конвертер
-│   │   └── voc.py    # PASCAL VOC конвертер
 │   └── types.py      # Типы данных
 ├── tests/            # Тесты
 └── pyproject.toml    # Конфигурация проекта
@@ -34,7 +33,7 @@ d20/
 Проект использует классовую архитектуру для конвертеров форматов:
 
 - **`FormatConverter`** - базовый абстрактный класс в `formats/base.py`
-- **Конкретные конвертеры** - `CocoConverter`, `YoloConverter`, `VocConverter`
+- **Конкретные конвертеры** - `CocoConverter`, `YoloConverter`
 - Каждый конвертер реализует методы `autodetect()`, `read()`, `write()`
 
 ### Добавление нового формата

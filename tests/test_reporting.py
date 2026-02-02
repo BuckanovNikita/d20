@@ -16,7 +16,6 @@ from d20.types import (
     ExportOptions,
     ImageInfo,
     Split,
-    VocDetectedParams,
     YoloDetectedParams,
 )
 
@@ -47,21 +46,6 @@ def test_get_format_from_params_coco(tmp_path: Path) -> None:
     )
     format_name = _get_format_from_params(params)
     assert format_name == "coco"
-
-
-def test_get_format_from_params_voc(tmp_path: Path) -> None:
-    """Test _get_format_from_params() with VOC params."""
-    params = VocDetectedParams(
-        input_path=tmp_path,
-        class_names=["cat"],
-        splits=None,
-        images_dir="JPEGImages",
-        labels_dir=None,
-        annotations_dir="Annotations",
-        auto_detect_splits=False,
-    )
-    format_name = _get_format_from_params(params)
-    assert format_name == "voc"
 
 
 def test_get_format_from_params_unknown() -> None:

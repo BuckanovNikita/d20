@@ -154,10 +154,9 @@ def test_list_formats() -> None:
     """Test list_formats() function."""
     formats = list_formats()
     assert "coco" in formats
-    assert "voc" in formats
     assert "yolo" in formats
     assert isinstance(formats, list)
-    assert len(formats) >= 3
+    assert len(formats) >= 2
 
 
 def test_format_not_registered_error() -> None:

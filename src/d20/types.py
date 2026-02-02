@@ -106,7 +106,7 @@ class DetectedParams(Protocol):
     annotations_dir: str | None
 
     def get_format_name(self) -> str:
-        """Return the format name (e.g., 'yolo', 'coco', 'voc').
+        """Return the format name (e.g., 'yolo', 'coco').
 
         Returns:
             Format name string
@@ -210,41 +210,6 @@ class CocoDetectedParams:
         )
 
 
-@dataclass
-class VocDetectedParams:
-    """VOC-specific detected parameters."""
-
-    input_path: Path | list[Path]
-    class_names: list[str] | None = None
-    splits: list[str] | None = None
-    images_dir: str | None = None
-    labels_dir: str | None = None
-    annotations_dir: str | None = None
-    auto_detect_splits: bool = False  # Format-specific: auto-detect from ImageSets/Main
-
-    def get_format_name(self) -> str:
-        """Return the format name."""
-        return "voc"
-
-    def with_overrides(
-        self,
-        class_names: list[str] | None = None,
-        splits: list[str] | None = None,
-        images_dir: str | None = None,
-        labels_dir: str | None = None,
-        annotations_dir: str | None = None,
-    ) -> VocDetectedParams:
-        """Return new instance with overridden values."""
-        return dataclasses.replace(
-            self,
-            class_names=class_names if class_names is not None else self.class_names,
-            splits=splits if splits is not None else self.splits,
-            images_dir=images_dir if images_dir is not None else self.images_dir,
-            labels_dir=labels_dir if labels_dir is not None else self.labels_dir,
-            annotations_dir=annotations_dir if annotations_dir is not None else self.annotations_dir,
-        )
-
-
 # Base protocol/interface for write parameters
 class WriteDetectedParams(Protocol):
     """Interface for format-specific write parameters."""
@@ -270,17 +235,6 @@ class YoloWriteDetectedParams:
 @dataclass
 class CocoWriteDetectedParams:
     """COCO-specific write parameters."""
-
-    class_names: list[str]
-    splits: list[str] | None = None
-    images_dir: str = "images"
-    labels_dir: str = "labels"
-    annotations_dir: str = "annotations"
-
-
-@dataclass
-class VocWriteDetectedParams:
-    """VOC-specific write parameters."""
 
     class_names: list[str]
     splits: list[str] | None = None

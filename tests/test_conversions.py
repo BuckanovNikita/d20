@@ -9,15 +9,12 @@ from typing import Any
 
 import pytest
 import yaml
-from defusedxml import ElementTree
 
 from d20.convert import ConversionRequest, convert_dataset
 from d20.formats import get_converter
 from d20.types import (
     CocoDetectedParams,
     CocoWriteDetectedParams,
-    VocDetectedParams,
-    VocWriteDetectedParams,
     YoloDetectedParams,
     YoloWriteDetectedParams,
 )
@@ -139,32 +136,10 @@ def _read_coco_category_count(labels_path: Path) -> int:
     return len(data.get("categories", []))
 
 
-def _read_voc_split_ids(image_sets_dir: Path, split: str) -> list[str]:
-    split_path = image_sets_dir / f"{split}.txt"
-    assert split_path.exists(), f"Missing VOC split file: {split_path}"
-
-    ids = []
-    for line in split_path.read_text().splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        ids.append(stripped.split()[0])
-    return ids
-
-
-def _count_voc_annotations(annotations_dir: Path, split_ids: list[str]) -> int:
-    total = 0
-    for image_id in split_ids:
-        xml_path = annotations_dir / f"{image_id}.xml"
-        tree = ElementTree.parse(xml_path)
-        total += len(tree.findall(".//object"))
-    return total
-
-
 def _build_write_params(
     format_name: str,
     config: WriteParamsConfig,
-) -> CocoWriteDetectedParams | YoloWriteDetectedParams | VocWriteDetectedParams:
+) -> CocoWriteDetectedParams | YoloWriteDetectedParams:
     """Build WriteDetectedParams for testing."""
     if format_name == "yolo":
         return YoloWriteDetectedParams(
@@ -176,14 +151,6 @@ def _build_write_params(
         )
     if format_name == "coco":
         return CocoWriteDetectedParams(
-            class_names=config.class_names,
-            splits=config.splits,
-            images_dir=config.images_dir,
-            labels_dir=config.labels_dir,
-            annotations_dir=config.annotations_dir,
-        )
-    if format_name == "voc":
-        return VocWriteDetectedParams(
             class_names=config.class_names,
             splits=config.splits,
             images_dir=config.images_dir,
@@ -224,27 +191,6 @@ def _verify_coco_conversion(coco_dir: Path, config: VerificationConfig) -> None:
             assert _read_coco_category_count(coco_labels_path) == len(config.class_names)
 
 
-def _verify_voc_conversion(voc_dir: Path, config: VerificationConfig) -> None:
-    """Verify VOC conversion results."""
-    voc_images_dir = voc_dir / "JPEGImages"
-    voc_annotations_dir = voc_dir / "Annotations"
-    voc_image_sets_dir = voc_dir / "ImageSets" / "Main"
-
-    assert voc_images_dir.exists()
-    assert voc_annotations_dir.exists()
-    assert voc_image_sets_dir.exists()
-
-    for split in config.splits:
-        split_ids = _read_voc_split_ids(voc_image_sets_dir, split)
-        expected_images = _count_images(_split_path(config.fixture_root, config.images_dir, split))
-        expected_annotations = _count_yolo_annotations(
-            _split_path(config.fixture_root, config.labels_dir, split),
-        )
-
-        assert len(split_ids) == expected_images
-        assert _count_voc_annotations(voc_annotations_dir, split_ids) == expected_annotations
-
-
 def _verify_yolo_conversion(yolo_dir: Path, config: VerificationConfig) -> None:
     """Verify YOLO conversion results."""
     for split in config.splits:
@@ -263,8 +209,8 @@ def _verify_yolo_conversion(yolo_dir: Path, config: VerificationConfig) -> None:
 
 
 @pytest.mark.parametrize("yaml_path", DATASET_YAMLS)
-def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:
-    """Test roundtrip conversion: YOLO -> COCO -> VOC -> YOLO."""
+def test_yolo_coco_roundtrip(tmp_path: Path, yaml_path: Path) -> None:
+    """Test roundtrip conversion: YOLO -> COCO -> YOLO."""
     fixture = _resolve_yolo_fixture(yaml_path)
     fixture_root = fixture.root
     data = fixture.data
@@ -331,44 +277,6 @@ def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:
         split_files=coco_detected.split_files,
     )
 
-    voc_config = WriteParamsConfig(class_names=class_names, splits=splits, images_dir=images_dir, labels_dir=labels_dir)
-    voc_write_params = _build_write_params("voc", voc_config)
-
-    voc_dir = tmp_path / "voc"
-    request = ConversionRequest(
-        input_format="coco",
-        output_format="voc",
-        input_path=coco_dir,
-        output_dir=voc_dir,
-        read_params=coco_read_params,
-        write_params=voc_write_params,
-    )
-    convert_dataset(request)
-    voc_config_verify = VerificationConfig(
-        fixture_root=fixture_root,
-        splits=splits,
-        images_dir=images_dir,
-        labels_dir=labels_dir,
-    )
-    _verify_voc_conversion(voc_dir, voc_config_verify)
-
-    # Autodetect VOC parameters
-    voc_converter = get_converter("voc")
-    voc_detected = voc_converter.autodetect(voc_dir)
-    # Type narrowing: autodetect returns VocDetectedParams for voc converter
-    if not isinstance(voc_detected, VocDetectedParams):
-        msg = f"Expected VocDetectedParams, got {type(voc_detected)}"
-        raise TypeError(msg)
-    voc_read_params = VocDetectedParams(
-        input_path=voc_detected.input_path,
-        class_names=class_names,
-        splits=splits,
-        images_dir=voc_detected.images_dir,
-        labels_dir=voc_detected.labels_dir,
-        annotations_dir=voc_detected.annotations_dir,
-        auto_detect_splits=voc_detected.auto_detect_splits,
-    )
-
     yolo_config = WriteParamsConfig(
         class_names=class_names,
         splits=splits,
@@ -379,11 +287,11 @@ def test_yolo_coco_voc_roundtrip(tmp_path: Path, yaml_path: Path) -> None:
 
     yolo_dir = tmp_path / "yolo"
     request = ConversionRequest(
-        input_format="voc",
+        input_format="coco",
         output_format="yolo",
-        input_path=voc_dir,
+        input_path=coco_dir,
         output_dir=yolo_dir,
-        read_params=voc_read_params,
+        read_params=coco_read_params,
         write_params=yolo_write_params,
     )
     convert_dataset(request)

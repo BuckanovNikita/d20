@@ -38,7 +38,7 @@ class FormatConverter(ABC):
     @property
     @abstractmethod
     def format_name(self) -> str:
-        """Return the format name (e.g., 'coco', 'voc', 'yolo')."""
+        """Return the format name (e.g., 'coco', 'yolo')."""
         ...
 
     @abstractmethod
@@ -111,7 +111,7 @@ class ConverterRegistry:
         """Register a format converter.
 
         Args:
-            format_name: Name of the format (e.g., 'coco', 'voc', 'yolo')
+            format_name: Name of the format (e.g., 'coco', 'yolo')
             converter_class: Converter class to register
 
         """
